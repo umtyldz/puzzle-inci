@@ -17,41 +17,41 @@
         <span class="logo-icon">🧩</span>
         <span class="logo-title">PUZZLE</span>
         <div id="gold-score-pill" class="gold-score-pill" title="Toplam Altın ve Bitirilen Puzzle">
-          <span class="gold-coin-icon">🪙</span>
+          <span class="gold-coin-icon" aria-hidden="true">★</span>
           <span id="gold-count">0</span>
         </div>
       </div>
 
       <div class="action-buttons">
         <!-- Giriş / Resim ve Parça Seçimi -->
-        <button id="btn-open-setup" class="btn btn-primary" title="Yeni Resim ve Parça Seç">
+        <button type="button" id="btn-open-setup" class="btn btn-primary" title="Yeni Resim ve Parça Seç">
           <span class="icon">🎨</span>
           <span class="btn-text">Yeni Puzzle</span>
         </button>
 
         <!-- Parça Sayısı Seçimi -->
-        <button id="btn-pieces-modal" class="btn btn-info" title="Parça Sayısını Değiştir">
+        <button type="button" id="btn-pieces-modal" class="btn btn-info" title="Parça Sayısını Değiştir">
           <span class="icon">🧩</span>
           <span id="current-pieces-badge" class="badge">6</span>
         </button>
 
         <!-- İpucu / Hayalet Resim Butonu (Göz) -->
-        <button id="btn-hint" class="btn btn-warning" title="Resmi Göster / Gizle">
+        <button type="button" id="btn-hint" class="btn btn-warning" title="Resmi Göster / Gizle">
           <span class="icon" id="hint-icon">👁️</span>
         </button>
 
         <!-- Ses Aç / Kapa -->
-        <button id="btn-sound" class="btn btn-icon" title="Ses">
+        <button type="button" id="btn-sound" class="btn btn-icon" title="Ses">
           <span class="icon" id="sound-icon">🔊</span>
         </button>
 
         <!-- Karıştır / Yeniden Başlat -->
-        <button id="btn-restart" class="btn btn-icon" title="Yeniden Başlat">
+        <button type="button" id="btn-restart" class="btn btn-icon" title="Yeniden Başlat">
           <span class="icon">🔄</span>
         </button>
 
         <!-- Tam Ekran Butonu -->
-        <button id="btn-fullscreen" class="btn btn-icon" title="Tam Ekran">
+        <button type="button" id="btn-fullscreen" class="btn btn-icon" title="Tam Ekran">
           <span class="icon" id="fullscreen-icon">⛶</span>
         </button>
       </div>
@@ -79,10 +79,10 @@
         <!-- Köşe Tam Resim Önizleme (Göz kapalıyken açılır, büyütülüp kaydırılabilir) -->
         <div id="ref-preview-box" class="hidden" aria-label="Tam Resim Önizleme">
           <div class="ref-preview-controls">
-            <button id="btn-ref-zoom-out" class="ref-btn" title="Uzaklaştır">➖</button>
-            <button id="btn-ref-zoom-in" class="ref-btn" title="Yakınlaştır">➕</button>
-            <button id="btn-ref-reset" class="ref-btn" title="Sıfırla">↺</button>
-            <button id="btn-ref-size" class="ref-btn" title="Büyüt / Küçült">⤢</button>
+            <button type="button" id="btn-ref-zoom-out" class="ref-btn" title="Uzaklaştır">➖</button>
+            <button type="button" id="btn-ref-zoom-in" class="ref-btn" title="Yakınlaştır">➕</button>
+            <button type="button" id="btn-ref-reset" class="ref-btn" title="Sıfırla">↺</button>
+            <button type="button" id="btn-ref-size" class="ref-btn" title="Büyüt / Küçült">⤢</button>
           </div>
           <div id="ref-preview-viewport">
             <img id="ref-preview-img" alt="Tam Resim" draggable="false">
@@ -91,22 +91,22 @@
 
         <!-- Tahta Yakınlaştırma Kontrolleri -->
         <div id="board-camera-controls" aria-label="Tahta Yakınlaştırma">
-          <button id="btn-board-zoom-out" class="ref-btn" title="Tahtayı Uzaklaştır">➖</button>
-          <button id="btn-board-zoom-reset" class="ref-btn ref-btn-text" title="Sıfırla">1x</button>
-          <button id="btn-board-zoom-in" class="ref-btn" title="Tahtayı Yakınlaştır">➕</button>
+          <button type="button" id="btn-board-zoom-out" class="ref-btn" title="Tahtayı Uzaklaştır">➖</button>
+          <button type="button" id="btn-board-zoom-reset" class="ref-btn ref-btn-text" title="Sıfırla">1x</button>
+          <button type="button" id="btn-board-zoom-in" class="ref-btn" title="Tahtayı Yakınlaştır">➕</button>
         </div>
       </section>
 
       <!-- Sağ Taraf: Parça Çekmecesi / Tepsi -->
       <section id="tray-container">
         <div class="tray-header">
-          <button id="btn-filter-edges" class="tray-filter-btn" title="Sadece Kenar Parçalarını Göster">
+          <button type="button" id="btn-filter-edges" class="tray-filter-btn" title="Sadece Kenar Parçalarını Göster">
             <span>🔲</span>
             <span class="tray-filter-text">Kenarlar</span>
           </button>
           <span class="tray-counter" id="tray-counter">0 / 6</span>
         </div>
-        <button id="tray-edges-done-banner" class="tray-edges-done hidden">✅ Kenarlar bitti! Tüm parçaları göster</button>
+        <button type="button" id="tray-edges-done-banner" class="tray-edges-done hidden">✅ Kenarlar bitti! Tüm parçaları göster</button>
         <div id="tray-scroll">
           <div id="tray-pieces">
             <!-- Serbest parçalar buraya yerleşir -->
@@ -126,8 +126,8 @@
         <div class="modal-header setup-modal-header">
           <h2>🧩 Yeni Puzzle</h2>
           <div class="setup-header-actions">
-            <button id="btn-setup-resume" class="btn btn-accent hidden">▶️ Mevcut Resimle Oyna</button>
-            <button id="btn-setup-close" class="modal-close hidden" data-close="modal-setup">✖</button>
+            <button type="button" id="btn-setup-resume" class="btn btn-accent hidden">▶️ Devam Et</button>
+            <button type="button" id="btn-setup-close" class="modal-close hidden" data-close="modal-setup">✖</button>
           </div>
         </div>
 
@@ -155,7 +155,7 @@
           <div class="setup-url-group">
             <span class="setup-url-icon">🔗</span>
             <input type="url" id="url-input-field" placeholder="Resim linki yapıştır (https://...)">
-            <button id="btn-load-url" class="btn btn-secondary">🚀 Yükle</button>
+            <button type="button" id="btn-load-url" class="btn btn-secondary">🚀 Yükle</button>
           </div>
         </div>
 
@@ -180,26 +180,29 @@
         <h1 class="celebration-title">HARİKA! BİTİRDİN! 🎉</h1>
         <p class="celebration-subtitle">Muhteşem bir iş çıkardın!</p>
         <div id="celebration-reward" class="celebration-reward">
-          <div class="reward-earned" id="reward-earned-text">+15 🪙 Altın Kazandın!</div>
-          <div class="reward-totals" id="reward-totals-text">Toplam: 🪙 15 • 🧩 1 Puzzle</div>
+          <div class="reward-earned" id="reward-earned-text">+15 🏅 Altın Kazandın!</div>
+          <div class="reward-totals" id="reward-totals-text">Toplam: 🏅 15 • 🧩 1 Puzzle</div>
         </div>
         <div class="completed-image-preview">
           <img id="completed-img" alt="Tamamlanan Puzzle">
         </div>
         <div class="celebration-actions">
-          <button id="btn-play-again" class="btn btn-large btn-primary">
+          <button type="button" id="btn-play-again" class="btn btn-large btn-primary">
             <span>🔄</span> Tekrar Oyna
           </button>
-          <button id="btn-next-level" class="btn btn-large btn-accent">
+          <button type="button" id="btn-next-level" class="btn btn-large btn-accent">
             <span>🧩</span> Daha Fazla Parça!
           </button>
-          <button id="btn-choose-new" class="btn btn-large btn-secondary">
+          <button type="button" id="btn-choose-new" class="btn btn-large btn-secondary">
             <span>🎨</span> Yeni Resim Seç
           </button>
         </div>
       </div>
       <canvas id="confetti-canvas"></canvas>
     </div>
+
+    <!-- Bilgilendirme / Hata Bildirim Balonu (Toast) -->
+    <div id="game-toast" class="game-toast hidden" role="status" aria-live="polite"></div>
 
     <!-- Telefon Dikey Uyarısı (Yatay Tutun Bildirimi) -->
     <div id="orientation-warning">

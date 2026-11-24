@@ -47,12 +47,17 @@ const PIECE_PRESETS = [
 
 class PuzzleGame {
   constructor() {
-    // Oyun Durumu
+    // Oyun Durumu (Aktif Puzzle)
     this.baseCols = 3;
     this.baseRows = 2;
     this.cols = 3;
     this.rows = 2;
     this.totalPieces = 6;
+    // Kurulum Modalındaki Bekleyen Seçim (Onaylanana kadar aktif oyunu bozmaz)
+    this.pendingCols = 3;
+    this.pendingRows = 2;
+    this.pendingPieces = 6;
+
     this.currentImage = null;
     this.pieces = [];
     this.placedCount = 0;
@@ -63,6 +68,7 @@ class PuzzleGame {
     this.cellHeight = 0;
     this.tabSize = 0;
     this.piecePad = 0;
+    this.boardFitScale = 1;
 
     // DOM Elemanları
     this.gameApp = document.getElementById("game-app");
@@ -84,6 +90,7 @@ class PuzzleGame {
     this.trayEdgesDoneBanner = document.getElementById("tray-edges-done-banner");
     this.rewardEarnedText = document.getElementById("reward-earned-text");
     this.rewardTotalsText = document.getElementById("reward-totals-text");
+    this.toastEl = document.getElementById("game-toast");
 
     // Modallar ve Butonlar
     this.currentPiecesBadge = document.getElementById("current-pieces-badge");
@@ -102,6 +109,7 @@ class PuzzleGame {
     this.boardZoom = 1;
     this.boardPanX = 0;
     this.boardPanY = 0;
+    this.boardPointersCount = 0;
     this.pendingTrayTouch = null;
     this.isCompactMode = false;
     this.hadNativeFullscreen = false;
@@ -113,6 +121,10 @@ class PuzzleGame {
     this.isHttpServer = location.protocol === "http:" || location.protocol === "https:";
     this.hasLocalApi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     this.searchSeq = 0;
+    this.imageLoadSeq = 0;
+    this.victoryTimer = null;
+    this.confettiRafId = null;
+    this.toastTimer = null;
     this.groups = new Map();
     this.piecesByCoord = new Map();
 
@@ -120,6 +132,10 @@ class PuzzleGame {
     this.activeDrag = null;
 
     // Başlat
+    const soundIcon = document.getElementById("sound-icon");
+    if (soundIcon && window.soundFX) {
+      soundIcon.textContent = window.soundFX.enabled ? "🔊" : "🔇";
+    }
     this.loadScore();
     this.initPiecesModal();
     this.initEvents();
@@ -131,6 +147,23 @@ class PuzzleGame {
     this.initPresetsModal();
     this.loadRecentImages();
     this.initConfetti();
+  }
+
+  showToast(message, durationMs = 3200) {
+    if (!this.toastEl) return;
+    if (this.toastTimer) {
+      clearTimeout(this.toastTimer);
+    }
+    this.toastEl.textContent = message;
+    this.toastEl.classList.remove("hidden");
+    this.toastTimer = setTimeout(() => {
+      this.toastEl.classList.add("hidden");
+      this.toastTimer = null;
+    }, durationMs);
+  }
+
+  getEffectiveBoardScale() {
+    return (this.boardFitScale || 1) * this.boardZoom;
   }
 
   getCurrentImageAspect() {
@@ -214,7 +247,8 @@ class PuzzleGame {
 
     PIECE_PRESETS.forEach((preset) => {
       const btn = document.createElement("button");
-      btn.className = "piece-card" + (preset.pieces === this.totalPieces ? " active" : "");
+      btn.type = "button";
+      btn.className = "piece-card" + (preset.pieces === this.pendingPieces ? " active" : "");
       btn.setAttribute("data-pieces", preset.pieces);
       btn.setAttribute("data-cols", preset.cols);
       btn.setAttribute("data-rows", preset.rows);
@@ -255,7 +289,7 @@ class PuzzleGame {
 
     const clampAndSyncInput = () => {
       const parsed = parseInt(numInput.value, 10);
-      const clamped = Math.max(4, Math.min(500, isNaN(parsed) ? this.totalPieces : parsed));
+      const clamped = Math.max(4, Math.min(500, isNaN(parsed) ? this.pendingPieces : parsed));
       const g = this.computeGridForPieceCount(clamped, this.getCurrentImageAspect());
       numInput.value = g.pieces;
       slider.value = g.pieces;
@@ -274,9 +308,12 @@ class PuzzleGame {
   }
 
   syncPiecesModalUI(skipInputOverwrite = false) {
+    const oriented = this.orientGridForImage(this.pendingCols, this.pendingRows);
+    this.pendingPieces = oriented.cols * oriented.rows;
+
     document.querySelectorAll(".piece-card").forEach((card) => {
       const pieces = parseInt(card.getAttribute("data-pieces"), 10);
-      card.classList.toggle("active", pieces === this.totalPieces);
+      card.classList.toggle("active", pieces === this.pendingPieces);
     });
 
     const slider = document.getElementById("custom-pieces-slider");
@@ -284,28 +321,51 @@ class PuzzleGame {
     const preview = document.getElementById("custom-pieces-preview");
     if (slider && numInput && preview) {
       if (!skipInputOverwrite) {
-        slider.value = this.totalPieces;
-        numInput.value = this.totalPieces;
+        slider.value = this.pendingPieces;
+        numInput.value = this.pendingPieces;
       }
-      preview.textContent = `${this.cols} × ${this.rows} = ${this.totalPieces} Parça`;
+      preview.textContent = `${oriented.cols} × ${oriented.rows} = ${this.pendingPieces} Parça`;
+    }
+
+    if (this.btnSetupResume && this.hasStarted) {
+      if (this.pendingPieces !== this.totalPieces) {
+        this.btnSetupResume.textContent = `▶️ ${this.pendingPieces} Parçayla Başlat`;
+      } else if (this.placedCount >= this.totalPieces) {
+        this.btnSetupResume.textContent = "▶️ Tekrar Oyna";
+      } else {
+        this.btnSetupResume.textContent = "▶️ Oyuna Dön";
+      }
     }
   }
 
   setPendingPieceSelection(cols, rows, skipInputOverwrite = false) {
-    this.baseCols = cols;
-    this.baseRows = rows;
+    this.pendingCols = cols;
+    this.pendingRows = rows;
+    this.syncPiecesModalUI(skipInputOverwrite);
+  }
+
+  commitPendingPieceSelection() {
+    this.baseCols = this.pendingCols;
+    this.baseRows = this.pendingRows;
     this.syncGridOrientation();
     this.totalPieces = this.cols * this.rows;
-    this.currentPiecesBadge.textContent = this.totalPieces;
-    this.syncPiecesModalUI(skipInputOverwrite);
+    this.pendingPieces = this.totalPieces;
+    if (this.currentPiecesBadge) {
+      this.currentPiecesBadge.textContent = this.totalPieces;
+    }
+    this.syncPiecesModalUI();
   }
 
   applyPieceSelection(cols, rows) {
     this.setPendingPieceSelection(cols, rows);
+    this.commitPendingPieceSelection();
     this.startPuzzle();
   }
 
   openSetupModal() {
+    this.cancelActiveDrag();
+    this.pendingCols = this.baseCols;
+    this.pendingRows = this.baseRows;
     this.syncPiecesModalUI();
     this.loadRecentImages();
     this.btnSetupResume.classList.toggle("hidden", !this.hasStarted);
@@ -319,10 +379,25 @@ class PuzzleGame {
   // OLAYLARI VE DİNLEYİCİLERİ BAŞLAT
   // ============================================================
   initEvents() {
-    // Pencere yeniden boyutlandırma
+    // Pencere yeniden boyutlandırma: mevcut parçaların hizasını bozmadan tahtayı ekrana sığdır
     window.addEventListener("resize", () => {
+      this.cancelActiveDrag();
       if (this.currentImage) {
-        this.recalculateBoardSize();
+        this.updateBoardCamera();
+        this.updateRefPreviewTransform();
+      }
+    });
+
+    // Sekme değişimi veya pencere odağı kaybında asılı sürüklemeyi güvenli şekilde iptal et
+    window.addEventListener("blur", () => this.cancelActiveDrag());
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.cancelActiveDrag();
+    });
+
+    // ESC ile kurulum modalını kapat (aktif oyun varsa)
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.hasStarted && !this.modalSetup.classList.contains("hidden")) {
+        this.modalSetup.classList.add("hidden");
       }
     });
 
@@ -331,10 +406,19 @@ class PuzzleGame {
     fileInput.addEventListener("change", (e) => {
       const file = e.target.files[0];
       if (file) {
+        if (!file.type.startsWith("image/")) {
+          this.showToast("⚠️ Lütfen geçerli bir resim dosyası seçin.");
+          fileInput.value = "";
+          return;
+        }
         const reader = new FileReader();
         reader.onload = (event) => {
-          this.loadImage(event.target.result);
-          this.saveUploadedFile(file, event.target.result);
+          this.loadImage(event.target.result, null, () => {
+            this.saveUploadedFile(file, event.target.result);
+          });
+        };
+        reader.onerror = () => {
+          this.showToast("⚠️ Dosya okunamadı, lütfen tekrar deneyin.");
         };
         reader.readAsDataURL(file);
       }
@@ -345,15 +429,18 @@ class PuzzleGame {
     window.addEventListener("dragover", (e) => e.preventDefault());
     window.addEventListener("drop", (e) => {
       e.preventDefault();
-      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
         const file = e.dataTransfer.files[0];
         if (file.type.startsWith("image/")) {
           const reader = new FileReader();
           reader.onload = (event) => {
-            this.loadImage(event.target.result);
-            this.saveUploadedFile(file, event.target.result);
+            this.loadImage(event.target.result, null, () => {
+              this.saveUploadedFile(file, event.target.result);
+            });
           };
           reader.readAsDataURL(file);
+        } else {
+          this.showToast("⚠️ Lütfen bir resim dosyası sürükleyin.");
         }
       }
     });
@@ -373,10 +460,11 @@ class PuzzleGame {
       if (!this.hasStarted || !this.currentImage) return;
       window.soundFX.playClick();
       this.modalSetup.classList.add("hidden");
-      this.syncGridOrientation();
-      this.totalPieces = this.cols * this.rows;
-      this.currentPiecesBadge.textContent = this.totalPieces;
-      this.startPuzzle();
+      const countChanged = this.pendingPieces !== this.totalPieces;
+      if (countChanged || this.placedCount >= this.totalPieces) {
+        this.commitPendingPieceSelection();
+        this.startPuzzle();
+      }
     });
 
     // Modal Kapatma Düğmeleri (yalnızca bir oyun başladıysa kapatılabilir)
@@ -401,12 +489,19 @@ class PuzzleGame {
     // Linkten Resim Yükleme Butonu & Enter Desteği
     const urlInputField = document.getElementById("url-input-field");
     const submitUrl = () => {
-      const url = urlInputField.value.trim();
-      if (url) {
-        window.soundFX.playClick();
-        urlInputField.value = "";
-        this.saveImageUrl(url);
+      let url = urlInputField.value.trim();
+      if (!url) return;
+      if (!/^https?:\/\//i.test(url) && !/^data:image\//i.test(url)) {
+        if (/^[\w.-]+\.[a-z]{2,}\/.+/i.test(url)) {
+          url = "https://" + url;
+        } else {
+          this.showToast("⚠️ Lütfen geçerli bir resim linki (https://...) girin.");
+          return;
+        }
       }
+      window.soundFX.playClick();
+      urlInputField.value = "";
+      this.saveImageUrl(url);
     };
     document.getElementById("btn-load-url").addEventListener("click", submitUrl);
     urlInputField.addEventListener("keydown", (e) => {
@@ -418,6 +513,7 @@ class PuzzleGame {
 
     // İpucu / Göz Butonu
     document.getElementById("btn-hint").addEventListener("click", () => {
+      if (!this.hasStarted || !this.currentImage) return;
       window.soundFX.playClick();
       this.hintVisible = !this.hintVisible;
       const icon = document.getElementById("hint-icon");
@@ -443,6 +539,7 @@ class PuzzleGame {
 
     // Yeniden Başlat Butonu
     document.getElementById("btn-restart").addEventListener("click", () => {
+      if (!this.hasStarted || !this.currentImage) return;
       window.soundFX.playClick();
       this.startPuzzle();
     });
@@ -466,6 +563,7 @@ class PuzzleGame {
     const fullscreenBtn = document.getElementById("btn-fullscreen");
     const fullscreenIcon = document.getElementById("fullscreen-icon");
     const syncCompactIcon = () => {
+      this.cancelActiveDrag();
       this.gameApp.classList.toggle("compact-mode", this.isCompactMode);
       if (fullscreenIcon) {
         fullscreenIcon.textContent = this.isCompactMode ? "⤡" : "⛶";
@@ -505,14 +603,14 @@ class PuzzleGame {
     // Kutlama Ekranı Butonları
     document.getElementById("btn-play-again").addEventListener("click", () => {
       window.soundFX.playClick();
-      this.confettiActive = false;
+      this.stopConfetti();
       this.celebrationOverlay.classList.add("hidden");
       this.startPuzzle();
     });
 
     document.getElementById("btn-next-level").addEventListener("click", () => {
       window.soundFX.playClick();
-      this.confettiActive = false;
+      this.stopConfetti();
       this.celebrationOverlay.classList.add("hidden");
       const next = PIECE_PRESETS.find((p) => p.pieces > this.totalPieces) || PIECE_PRESETS[0];
       this.applyPieceSelection(next.cols, next.rows);
@@ -520,7 +618,7 @@ class PuzzleGame {
 
     document.getElementById("btn-choose-new").addEventListener("click", () => {
       window.soundFX.playClick();
-      this.confettiActive = false;
+      this.stopConfetti();
       this.celebrationOverlay.classList.add("hidden");
       this.openSetupModal();
     });
@@ -586,13 +684,14 @@ class PuzzleGame {
       if (
         e.target.closest("#ref-preview-box") ||
         e.target.closest("#board-camera-controls") ||
-        e.target.closest(".puzzle-piece:not(.locked)")
+        (pointers.size === 0 && e.target.closest(".puzzle-piece:not(.locked)"))
       ) {
         return;
       }
       if (this.activeDrag) return;
 
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.boardPointersCount = pointers.size;
 
       if (pointers.size === 1 && this.boardZoom > 1) {
         try {
@@ -650,6 +749,7 @@ class PuzzleGame {
     const endBoardPointer = (e) => {
       if (!pointers.has(e.pointerId)) return;
       pointers.delete(e.pointerId);
+      this.boardPointersCount = pointers.size;
       try {
         bc.releasePointerCapture(e.pointerId);
       } catch (err) {}
@@ -710,14 +810,28 @@ class PuzzleGame {
     if (!this.boardStage || !this.boardContainer) return;
     const cw = this.boardContainer.clientWidth;
     const ch = this.boardContainer.clientHeight;
+
+    if (this.boardWidth > 0 && this.boardHeight > 0 && cw > 40 && ch > 40) {
+      const availW = Math.max(120, cw - 28);
+      const availH = Math.max(100, ch - 28);
+      let fit = Math.min(1.5, availW / this.boardWidth, availH / this.boardHeight);
+      if (Math.abs(fit - 1) < 0.02) fit = 1;
+      this.boardFitScale = fit;
+    } else {
+      this.boardFitScale = 1;
+    }
+
     const z = this.boardZoom;
-    const maxX = Math.max(0, (cw * (z - 1)) / 2 + 80 * (z - 1));
-    const maxY = Math.max(0, (ch * (z - 1)) / 2 + 80 * (z - 1));
+    const scale = this.getEffectiveBoardScale();
+    const visW = (this.boardWidth || cw) * scale;
+    const visH = (this.boardHeight || ch) * scale;
+    const maxX = z > 1 ? Math.max((visW - cw) / 2 + 80 * scale, (cw * (z - 1)) / 2) : 0;
+    const maxY = z > 1 ? Math.max((visH - ch) / 2 + 80 * scale, (ch * (z - 1)) / 2) : 0;
 
     this.boardPanX = Math.max(-maxX, Math.min(maxX, this.boardPanX));
     this.boardPanY = Math.max(-maxY, Math.min(maxY, this.boardPanY));
 
-    this.boardStage.style.transform = `translate(${this.boardPanX}px, ${this.boardPanY}px) scale(${z})`;
+    this.boardStage.style.transform = `translate(${this.boardPanX}px, ${this.boardPanY}px) scale(${scale})`;
     this.boardContainer.classList.toggle("is-zoomed", z > 1);
 
     if (this.btnBoardZoomReset) {
@@ -1106,6 +1220,37 @@ class PuzzleGame {
     this.renderRecentImages();
   }
 
+  compressDataUrlForStorage(dataUrl, maxDim = 960, quality = 0.8) {
+    return new Promise((resolve) => {
+      if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+        resolve(dataUrl);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const w = img.naturalWidth || 1;
+          const h = img.naturalHeight || 1;
+          const ratio = Math.min(1, maxDim / Math.max(w, h));
+          const tw = Math.max(1, Math.round(w * ratio));
+          const th = Math.max(1, Math.round(h * ratio));
+          const canvas = document.createElement("canvas");
+          canvas.width = tw;
+          canvas.height = th;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, tw, th);
+          ctx.drawImage(img, 0, 0, tw, th);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        } catch (e) {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  }
+
   saveToLocalStorage(item) {
     try {
       const raw = localStorage.getItem("puzzle_recent_images_v1");
@@ -1152,6 +1297,7 @@ class PuzzleGame {
       title.textContent = item.name || "Kaydedilen Resim";
 
       const delBtn = document.createElement("button");
+      delBtn.type = "button";
       delBtn.className = "preset-delete-btn";
       delBtn.title = "Görseli Sil";
       delBtn.textContent = "✖";
@@ -1167,7 +1313,6 @@ class PuzzleGame {
       card.addEventListener("click", () => {
         window.soundFX.playClick();
         this.loadImage(item.url);
-        this.modalSetup.classList.add("hidden");
       });
 
       grid.appendChild(card);
@@ -1193,7 +1338,8 @@ class PuzzleGame {
     }
 
     const cleanName = (file.name || "Yüklenen Resim").replace(/\.[^.]+$/, "");
-    this.saveToLocalStorage({ filename: file.name, name: cleanName, url: dataUrl });
+    const compactDataUrl = await this.compressDataUrlForStorage(dataUrl);
+    this.saveToLocalStorage({ filename: file.name, name: cleanName, url: compactDataUrl });
   }
 
   async saveImageUrl(url, fallbackUrl = null, label = "Link Resmi") {
@@ -1217,8 +1363,9 @@ class PuzzleGame {
       }
     }
 
-    this.loadImage(url, fallbackUrl);
-    this.saveToLocalStorage({ filename: url, name: label || "Link Resmi", url: fallbackUrl || url });
+    this.loadImage(url, fallbackUrl, (loadedSrc) => {
+      this.saveToLocalStorage({ filename: loadedSrc, name: label || "Link Resmi", url: loadedSrc });
+    });
   }
 
   async deleteRecentImage(item) {
@@ -1264,7 +1411,6 @@ class PuzzleGame {
       card.addEventListener("click", () => {
         window.soundFX.playClick();
         this.loadPresetById(item.id);
-        this.modalSetup.classList.add("hidden");
       });
       grid.appendChild(card);
     });
@@ -1278,34 +1424,55 @@ class PuzzleGame {
   // ============================================================
   // RESİM YÜKLE VE BOYUTLANDIR
   // ============================================================
-  loadImage(src, fallbackSrc = null) {
+  loadImage(src, fallbackSrc = null, onSuccess = null, existingSeq = null) {
+    const seq = existingSeq !== null ? existingSeq : ++this.imageLoadSeq;
     const img = new Image();
-    if (src.startsWith("http")) {
+    if (typeof src === "string" && /^https?:\/\//i.test(src)) {
       img.crossOrigin = "anonymous";
     }
     img.onload = () => {
-      this.hasStarted = true;
-      this.modalSetup.classList.add("hidden");
-      this.currentImage = img;
-      this.completedImg.src = src;
-      this.boardHintImg.src = src;
-      this.refPreviewImg.src = src;
-      this.resetRefPreview();
-      this.syncGridOrientation();
-      this.totalPieces = this.cols * this.rows;
-      this.currentPiecesBadge.textContent = this.totalPieces;
-      this.syncPiecesModalUI();
-      this.startPuzzle();
+      if (seq !== this.imageLoadSeq) return;
+      if (!img.naturalWidth || !img.naturalHeight) {
+        if (!this.hasStarted) this.openSetupModal();
+        this.showToast("⚠️ Seçilen görsel geçersiz görünüyor. Lütfen başka bir resim seçin.");
+        return;
+      }
+
+      const prevImage = this.currentImage;
+      const wasStarted = this.hasStarted;
+      try {
+        this.hasStarted = true;
+        this.modalSetup.classList.add("hidden");
+        this.currentImage = img;
+        this.completedImg.src = src;
+        this.boardHintImg.src = src;
+        this.refPreviewImg.src = src;
+        this.resetRefPreview();
+        this.commitPendingPieceSelection();
+        this.startPuzzle();
+        if (typeof onSuccess === "function") {
+          onSuccess(src);
+        }
+      } catch (err) {
+        console.error("Puzzle oluşturma hatası:", err);
+        this.currentImage = prevImage;
+        this.hasStarted = wasStarted;
+        if (!this.hasStarted) {
+          this.openSetupModal();
+        }
+        this.showToast("⚠️ Bu resim güvenlik kısıtı nedeniyle açılamadı. Başka bir resim deneyin.");
+      }
     };
     img.onerror = () => {
+      if (seq !== this.imageLoadSeq) return;
       if (fallbackSrc && fallbackSrc !== src) {
-        this.loadImage(fallbackSrc, null);
+        this.loadImage(fallbackSrc, null, onSuccess, seq);
         return;
       }
       if (!this.hasStarted) {
         this.openSetupModal();
       }
-      alert("Resim yüklenirken bir hata oluştu! Lütfen başka bir resim veya link deneyin.");
+      this.showToast("⚠️ Resim yüklenemedi! Lütfen başka bir resim veya doğrudan resim linki deneyin.");
     };
     img.src = src;
   }
@@ -1334,6 +1501,7 @@ class PuzzleGame {
 
     this.board.style.width = `${this.boardWidth}px`;
     this.board.style.height = `${this.boardHeight}px`;
+    this.boardFitScale = 1;
 
     this.cellWidth = this.boardWidth / this.cols;
     this.cellHeight = this.boardHeight / this.rows;
@@ -1349,7 +1517,13 @@ class PuzzleGame {
   startPuzzle() {
     if (!this.currentImage) return;
 
-    this.confettiActive = false;
+    this.cancelActiveDrag();
+    if (this.victoryTimer) {
+      clearTimeout(this.victoryTimer);
+      this.victoryTimer = null;
+    }
+    this.stopConfetti();
+    this.celebrationOverlay.classList.add("hidden");
     this.puzzleRewarded = false;
     this.placedCount = 0;
     this.updateCounter();
@@ -1683,14 +1857,110 @@ class PuzzleGame {
   // ============================================================
   // PARÇA SÜRÜKLEME VE BIRAKMA (AKILLI TEPSİ SCROLL + ZOOM UYUMLU GRUP)
   // ============================================================
+  cancelActiveDrag() {
+    if (this.pendingTrayTouch) {
+      clearTimeout(this.pendingTrayTouch.timer);
+      this.pendingTrayTouch = null;
+    }
+    if (!this.activeDrag) return;
+
+    const drag = this.activeDrag;
+    this.activeDrag = null;
+    try {
+      drag.piece.element.releasePointerCapture(drag.pointerId);
+    } catch (err) {}
+
+    if (drag.wasInTray && drag.group.length === 1) {
+      const el = drag.piece.element;
+      el.classList.remove("dragging", "dragging-group", "floating");
+      el.classList.add("in-tray");
+      drag.piece.x = 0;
+      drag.piece.y = 0;
+      el.style.left = "";
+      el.style.top = "";
+      this.trayPieces.appendChild(el);
+      this.updateEdgesFilterBanner();
+    } else {
+      drag.prevPositions.forEach((item) => {
+        item.piece.element.classList.remove("dragging", "dragging-group", "in-tray");
+        item.piece.element.classList.add("floating");
+        this.boardFloatingLayer.appendChild(item.piece.element);
+        this.setPieceLayerPos(item.piece, item.x, item.y);
+      });
+      this.clampGroupToReachableArea(drag.group);
+    }
+
+    this.dragGroupContainer.innerHTML = "";
+    this.dragGroupContainer.style.transform = "";
+  }
+
+  clampGroupToReachableArea(group) {
+    if (!group || group.length === 0 || this.boardWidth <= 0 || this.boardHeight <= 0) return;
+
+    const fitScale = this.boardFitScale || 1;
+    const cw = this.boardContainer.clientWidth || this.boardWidth;
+    const ch = this.boardContainer.clientHeight || this.boardHeight;
+    const extraX = Math.max(10, (cw / fitScale - this.boardWidth) / 2 - 8);
+    const extraY = Math.max(10, (ch / fitScale - this.boardHeight) / 2 - 8);
+
+    const minAllowedX = -extraX;
+    const maxAllowedX = this.boardWidth + extraX;
+    const minAllowedY = -extraY;
+    const maxAllowedY = this.boardHeight + extraY;
+
+    const pad = this.piecePad;
+    let gMinX = Infinity;
+    let gMaxX = -Infinity;
+    let gMinY = Infinity;
+    let gMaxY = -Infinity;
+
+    for (const gp of group) {
+      gMinX = Math.min(gMinX, gp.x + pad);
+      gMaxX = Math.max(gMaxX, gp.x + pad + this.cellWidth);
+      gMinY = Math.min(gMinY, gp.y + pad);
+      gMaxY = Math.max(gMaxY, gp.y + pad + this.cellHeight);
+    }
+
+    let dx = 0;
+    let dy = 0;
+    const groupW = gMaxX - gMinX;
+    const groupH = gMaxY - gMinY;
+    const availW = maxAllowedX - minAllowedX;
+    const availH = maxAllowedY - minAllowedY;
+
+    if (groupW <= availW) {
+      if (gMinX < minAllowedX) dx = minAllowedX - gMinX;
+      else if (gMaxX > maxAllowedX) dx = maxAllowedX - gMaxX;
+    } else {
+      if (gMaxX < 40) dx = 40 - gMaxX;
+      else if (gMinX > this.boardWidth - 40) dx = this.boardWidth - 40 - gMinX;
+    }
+
+    if (groupH <= availH) {
+      if (gMinY < minAllowedY) dy = minAllowedY - gMinY;
+      else if (gMaxY > maxAllowedY) dy = maxAllowedY - gMaxY;
+    } else {
+      if (gMaxY < 40) dy = 40 - gMaxY;
+      else if (gMinY > this.boardHeight - 40) dy = this.boardHeight - 40 - gMinY;
+    }
+
+    if (dx !== 0 || dy !== 0) {
+      group.forEach((gp) => {
+        this.setPieceLayerPos(gp, gp.x + dx, gp.y + dy);
+      });
+    }
+  }
+
   startPieceDrag(piece, clientX, clientY, pointerId, wasInTray) {
+    if (piece.isLocked || this.activeDrag) return;
     window.soundFX.playPick();
 
     const el = piece.element;
     const group = this.getGroupPieces(piece.groupId);
+    const prevPositions = group.map((p) => ({ piece: p, x: p.x, y: p.y }));
     const lockedRect = this.boardLockedLayer.getBoundingClientRect();
     const layerRect = this.floatingLayer.getBoundingClientRect();
-    const z = this.boardZoom;
+    const scale = this.getEffectiveBoardScale();
 
     let anchorLocalX = 0;
     let anchorLocalY = 0;
@@ -1699,8 +1969,8 @@ class PuzzleGame {
     let offsets = [];
 
     if (wasInTray) {
-      startScreenAnchorX = clientX - layerRect.left - (piece.canvas.width * z) / 2;
-      startScreenAnchorY = clientY - layerRect.top - (piece.canvas.height * z) / 2;
+      startScreenAnchorX = clientX - layerRect.left - (piece.canvas.width * scale) / 2;
+      startScreenAnchorY = clientY - layerRect.top - (piece.canvas.height * scale) / 2;
       el.classList.remove("in-tray", "floating");
       el.classList.add("dragging");
       el.style.left = "0px";
@@ -1711,8 +1981,8 @@ class PuzzleGame {
     } else {
       anchorLocalX = piece.x;
       anchorLocalY = piece.y;
-      startScreenAnchorX = lockedRect.left - layerRect.left + anchorLocalX * z;
-      startScreenAnchorY = lockedRect.top - layerRect.top + anchorLocalY * z;
+      startScreenAnchorX = lockedRect.left - layerRect.left + anchorLocalX * scale;
+      startScreenAnchorY = lockedRect.top - layerRect.top + anchorLocalY * scale;
 
       const isMulti = group.length > 1;
       offsets = group.map((p) => {
@@ -1730,7 +2000,7 @@ class PuzzleGame {
       });
     }
 
-    this.dragGroupContainer.style.transform = `translate(${startScreenAnchorX}px, ${startScreenAnchorY}px) scale(${z})`;
+    this.dragGroupContainer.style.transform = `translate(${startScreenAnchorX}px, ${startScreenAnchorY}px) scale(${scale})`;
 
     try {
       el.setPointerCapture(pointerId);
@@ -1739,6 +2009,8 @@ class PuzzleGame {
     this.activeDrag = {
       piece: piece,
       group: group,
+      wasInTray: wasInTray,
+      prevPositions: prevPositions,
       pointerId: pointerId,
       startClientX: clientX,
       startClientY: clientY,
@@ -1754,7 +2026,9 @@ class PuzzleGame {
     const el = piece.element;
 
     el.addEventListener("pointerdown", (e) => {
-      if (piece.isLocked) return;
+      if (piece.isLocked || this.activeDrag || (e.button && e.button !== 0)) return;
+      // Sol tahtada 1 parmakla kaydırma/pinch başlamışsa 2. parmağın tahtaya geçmesine izin ver
+      if (!el.classList.contains("in-tray") && this.boardPointersCount > 0) return;
 
       const wasInTray = el.classList.contains("in-tray");
       if (wasInTray && e.pointerType !== "mouse") {
@@ -1774,7 +2048,9 @@ class PuzzleGame {
             if (this.pendingTrayTouch && this.pendingTrayTouch.pointerId === e.pointerId) {
               const pt = this.pendingTrayTouch;
               this.pendingTrayTouch = null;
-              this.startPieceDrag(pt.piece, pt.lastX, pt.lastY, pt.pointerId, true);
+              if (!this.activeDrag && !pt.piece.isLocked) {
+                this.startPieceDrag(pt.piece, pt.lastX, pt.lastY, pt.pointerId, true);
+              }
             }
           }, 220),
         };
@@ -1804,8 +2080,10 @@ class PuzzleGame {
             return;
           }
           // Yatay çekiş -> parçayı tepsiden kaldır
-          e.preventDefault();
-          this.startPieceDrag(piece, e.clientX, e.clientY, e.pointerId, true);
+          if (!this.activeDrag && !piece.isLocked) {
+            e.preventDefault();
+            this.startPieceDrag(piece, e.clientX, e.clientY, e.pointerId, true);
+          }
         }
         return;
       }
@@ -1819,7 +2097,8 @@ class PuzzleGame {
       this.activeDrag.curScreenAnchorX = this.activeDrag.startScreenAnchorX + dx;
       this.activeDrag.curScreenAnchorY = this.activeDrag.startScreenAnchorY + dy;
 
-      this.dragGroupContainer.style.transform = `translate(${this.activeDrag.curScreenAnchorX}px, ${this.activeDrag.curScreenAnchorY}px) scale(${this.boardZoom})`;
+      const scale = this.getEffectiveBoardScale();
+      this.dragGroupContainer.style.transform = `translate(${this.activeDrag.curScreenAnchorX}px, ${this.activeDrag.curScreenAnchorY}px) scale(${scale})`;
     });
 
     const onPointerUp = (e) => {
@@ -1837,12 +2116,13 @@ class PuzzleGame {
       } catch (err) {}
 
       const drag = this.activeDrag;
+      this.activeDrag = null;
       const lockedRect = this.boardLockedLayer.getBoundingClientRect();
       const layerRect = this.floatingLayer.getBoundingClientRect();
-      const z = this.boardZoom;
+      const scale = this.getEffectiveBoardScale();
 
-      const baseBoardX = (drag.curScreenAnchorX + layerRect.left - lockedRect.left) / z;
-      const baseBoardY = (drag.curScreenAnchorY + layerRect.top - lockedRect.top) / z;
+      const baseBoardX = (drag.curScreenAnchorX + layerRect.left - lockedRect.left) / scale;
+      const baseBoardY = (drag.curScreenAnchorY + layerRect.top - lockedRect.top) / scale;
 
       drag.offsets.forEach((item) => {
         item.piece.element.classList.remove("dragging", "dragging-group");
@@ -1852,7 +2132,6 @@ class PuzzleGame {
 
       this.dragGroupContainer.style.transform = "";
       this.checkGroupPlacement(piece, e.clientX, e.clientY);
-      this.activeDrag = null;
     };
 
     el.addEventListener("pointerup", onPointerUp);
@@ -1889,7 +2168,8 @@ class PuzzleGame {
       this.updateCounter();
 
       if (this.placedCount === this.totalPieces) {
-        setTimeout(() => this.triggerVictory(), 450);
+        if (this.victoryTimer) clearTimeout(this.victoryTimer);
+        this.victoryTimer = setTimeout(() => this.triggerVictory(), 450);
       }
     };
 
@@ -1983,6 +2263,8 @@ class PuzzleGame {
         snapThreshold
       ) {
         lockGroupToBoard(mergedGroup);
+      } else {
+        this.clampGroupToReachableArea(mergedGroup);
       }
       return;
     }
@@ -2011,14 +2293,16 @@ class PuzzleGame {
         gp.element.classList.remove("in-tray");
         gp.element.classList.add("floating");
       });
+      this.clampGroupToReachableArea(group);
     }
   }
 
   createSparkles(boardX, boardY) {
     const lockedRect = this.boardLockedLayer.getBoundingClientRect();
+    const scale = this.getEffectiveBoardScale();
     this.createSparklesAtViewport(
-      lockedRect.left + boardX * this.boardZoom,
-      lockedRect.top + boardY * this.boardZoom
+      lockedRect.left + boardX * scale,
+      lockedRect.top + boardY * scale
     );
   }
 
@@ -2123,6 +2407,11 @@ class PuzzleGame {
   // ZAFER VE KUTLAMA KANONLARI (CONFETTİ & FANFARE)
   // ============================================================
   triggerVictory() {
+    this.victoryTimer = null;
+    if (!this.currentImage || this.totalPieces <= 0 || this.placedCount < this.totalPieces) {
+      return;
+    }
+
     if (!this.puzzleRewarded) {
       this.puzzleRewarded = true;
       const earned = this.calculateGoldReward(this.totalPieces);
@@ -2132,10 +2421,10 @@ class PuzzleGame {
       this.updateScoreUI(true);
 
       if (this.rewardEarnedText) {
-        this.rewardEarnedText.textContent = `+${earned.toLocaleString("tr-TR")} 🪙 Altın Kazandın!`;
+        this.rewardEarnedText.textContent = `+${earned.toLocaleString("tr-TR")} 🏅 Altın Kazandın!`;
       }
       if (this.rewardTotalsText) {
-        this.rewardTotalsText.textContent = `Toplam: 🪙 ${this.goldCount.toLocaleString("tr-TR")} • 🧩 ${this.solvedCount} Puzzle`;
+        this.rewardTotalsText.textContent = `Toplam: 🏅 ${this.goldCount.toLocaleString("tr-TR")} • 🧩 ${this.solvedCount} Puzzle`;
       }
     }
 
@@ -2161,7 +2450,19 @@ class PuzzleGame {
     resizeConfetti();
   }
 
+  stopConfetti() {
+    this.confettiActive = false;
+    if (this.confettiRafId) {
+      cancelAnimationFrame(this.confettiRafId);
+      this.confettiRafId = null;
+    }
+    if (this.confettiCtx && this.confettiCanvas) {
+      this.confettiCtx.clearRect(0, 0, this.confettiCanvas.width, this.confettiCanvas.height);
+    }
+  }
+
   startConfetti() {
+    this.stopConfetti();
     this.confettiActive = true;
     this.confettiParticles = [];
     const colors = ["#ff5722", "#ffeb3b", "#00e676", "#00e5ff", "#e91e63", "#9c27b0", "#ff9800"];
@@ -2181,7 +2482,10 @@ class PuzzleGame {
     }
 
     const animate = () => {
-      if (!this.confettiActive) return;
+      if (!this.confettiActive) {
+        this.confettiRafId = null;
+        return;
+      }
       this.confettiCtx.clearRect(0, 0, this.confettiCanvas.width, this.confettiCanvas.height);
 
       this.confettiParticles.forEach((p) => {
@@ -2210,10 +2514,10 @@ class PuzzleGame {
         }
       });
 
-      requestAnimationFrame(animate);
+      this.confettiRafId = requestAnimationFrame(animate);
     };
 
-    requestAnimationFrame(animate);
+    this.confettiRafId = requestAnimationFrame(animate);
   }
 }
 
