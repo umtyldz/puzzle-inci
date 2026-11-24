@@ -1,0 +1,4 @@
+saved-images/*
+!saved-images/.gitkeep
+Thumbs.db
+.DS_Store
