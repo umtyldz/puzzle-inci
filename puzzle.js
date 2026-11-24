@@ -4,6 +4,8 @@
    otomatik oturma (snap), konfeti ve kutlama animasyonları
    ============================================================ */
 
+const ENABLE_IMAGE_SEARCH = false;
+
 const SAFE_BLOCKED_PATTERN =
   /\b(sex|porn|xxx|nude|naked|nsfw|erotic|hentai|bikini|lingerie|gore|blood|kill|murder|death|corpse|violence|gun|weapon|rifle|knife|drug|cocaine|weed|alcohol|beer|vodka|seks|porno|ciplak|erotik|yetiskin|kan|olum|silah|bicak|uyusturucu|alkol|siddet)\b/i;
 
@@ -76,6 +78,12 @@ class PuzzleGame {
     this.floatingLayer = document.getElementById("floating-pieces-layer");
     this.dragGroupContainer = document.getElementById("drag-group-container");
     this.btnBoardZoomReset = document.getElementById("btn-board-zoom-reset");
+    this.goldCountEl = document.getElementById("gold-count");
+    this.goldPillEl = document.getElementById("gold-score-pill");
+    this.btnFilterEdges = document.getElementById("btn-filter-edges");
+    this.trayEdgesDoneBanner = document.getElementById("tray-edges-done-banner");
+    this.rewardEarnedText = document.getElementById("reward-earned-text");
+    this.rewardTotalsText = document.getElementById("reward-totals-text");
 
     // Modallar ve Butonlar
     this.currentPiecesBadge = document.getElementById("current-pieces-badge");
@@ -97,6 +105,10 @@ class PuzzleGame {
     this.pendingTrayTouch = null;
     this.isCompactMode = false;
     this.hadNativeFullscreen = false;
+    this.goldCount = 0;
+    this.solvedCount = 0;
+    this.puzzleRewarded = false;
+    this.edgesOnlyFilter = false;
     this.recentImages = [];
     this.isHttpServer = location.protocol === "http:" || location.protocol === "https:";
     this.hasLocalApi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -108,11 +120,14 @@ class PuzzleGame {
     this.activeDrag = null;
 
     // Başlat
+    this.loadScore();
     this.initPiecesModal();
     this.initEvents();
     this.initBoardCamera();
     this.initRefPreview();
-    this.initImageSearch();
+    if (ENABLE_IMAGE_SEARCH) {
+      this.initImageSearch();
+    }
     this.initPresetsModal();
     this.loadRecentImages();
     this.initConfetti();
@@ -431,6 +446,21 @@ class PuzzleGame {
       window.soundFX.playClick();
       this.startPuzzle();
     });
+
+    // Kenar Parçaları Filtrele Butonu
+    if (this.btnFilterEdges) {
+      this.btnFilterEdges.addEventListener("click", () => {
+        window.soundFX.playClick();
+        this.setEdgesFilter(!this.edgesOnlyFilter);
+      });
+    }
+
+    if (this.trayEdgesDoneBanner) {
+      this.trayEdgesDoneBanner.addEventListener("click", () => {
+        window.soundFX.playClick();
+        this.setEdgesFilter(false);
+      });
+    }
 
     // Tam Ekran / Kompakt Mod Butonu
     const fullscreenBtn = document.getElementById("btn-fullscreen");
@@ -1320,6 +1350,7 @@ class PuzzleGame {
     if (!this.currentImage) return;
 
     this.confettiActive = false;
+    this.puzzleRewarded = false;
     this.placedCount = 0;
     this.updateCounter();
     this.recalculateBoardSize();
@@ -1343,6 +1374,7 @@ class PuzzleGame {
 
     // 4. Parçaları karıştır ve tepsiye yerleştir
     this.shufflePiecesToTray();
+    this.setEdgesFilter(false);
   }
 
   // ============================================================
@@ -1530,8 +1562,9 @@ class PuzzleGame {
         ctx.restore();
 
         // Parça DOM Elemanı Oluştur
+        const isEdge = r === 0 || r === this.rows - 1 || c === 0 || c === this.cols - 1;
         const pieceEl = document.createElement("div");
-        pieceEl.className = "puzzle-piece";
+        pieceEl.className = isEdge ? "puzzle-piece is-edge" : "puzzle-piece";
         pieceEl.appendChild(canvas);
 
         const pieceObj = {
@@ -1539,6 +1572,7 @@ class PuzzleGame {
           col: c,
           id: `p_${r}_${c}`,
           groupId: `p_${r}_${c}`,
+          isEdge: isEdge,
           x: 0,
           y: 0,
           element: pieceEl,
@@ -1672,6 +1706,7 @@ class PuzzleGame {
       el.style.left = "0px";
       el.style.top = "0px";
       this.dragGroupContainer.appendChild(el);
+      this.updateEdgesFilterBanner();
       offsets = [{ piece, ox: 0, oy: 0 }];
     } else {
       anchorLocalX = piece.x;
@@ -1970,6 +2005,7 @@ class PuzzleGame {
       el.style.left = "";
       el.style.top = "";
       this.trayPieces.appendChild(el);
+      this.updateEdgesFilterBanner();
     } else {
       group.forEach((gp) => {
         gp.element.classList.remove("in-tray");
@@ -2009,9 +2045,100 @@ class PuzzleGame {
   }
 
   // ============================================================
+  // KENAR PARÇALARI FİLTRELEME
+  // ============================================================
+  setEdgesFilter(enabled) {
+    this.edgesOnlyFilter = Boolean(enabled);
+    if (this.trayPieces) {
+      this.trayPieces.classList.toggle("edges-only", this.edgesOnlyFilter);
+    }
+    if (this.btnFilterEdges) {
+      this.btnFilterEdges.classList.toggle("active", this.edgesOnlyFilter);
+    }
+    const scrollBox = document.getElementById("tray-scroll");
+    if (scrollBox) scrollBox.scrollTop = 0;
+    this.updateEdgesFilterBanner();
+  }
+
+  updateEdgesFilterBanner() {
+    if (!this.trayEdgesDoneBanner || !this.trayPieces) return;
+    if (!this.edgesOnlyFilter) {
+      this.trayEdgesDoneBanner.classList.add("hidden");
+      return;
+    }
+    const remainingEdges = this.trayPieces.querySelectorAll(".puzzle-piece.in-tray.is-edge").length;
+    const remainingTotal = this.trayPieces.querySelectorAll(".puzzle-piece.in-tray").length;
+    this.trayEdgesDoneBanner.classList.toggle(
+      "hidden",
+      !(remainingEdges === 0 && remainingTotal > 0)
+    );
+  }
+
+  // ============================================================
+  // ALTIN & SKOR SİSTEMİ (KALICI HAFIZA)
+  // ============================================================
+  loadScore() {
+    try {
+      const raw = localStorage.getItem("puzzle_score_v1");
+      const data = raw ? JSON.parse(raw) : null;
+      this.goldCount = data && Number.isFinite(Number(data.gold)) ? Math.max(0, Math.floor(Number(data.gold))) : 0;
+      this.solvedCount = data && Number.isFinite(Number(data.solved)) ? Math.max(0, Math.floor(Number(data.solved))) : 0;
+    } catch (e) {
+      this.goldCount = 0;
+      this.solvedCount = 0;
+    }
+    this.updateScoreUI(false);
+  }
+
+  saveScore() {
+    try {
+      localStorage.setItem(
+        "puzzle_score_v1",
+        JSON.stringify({ gold: this.goldCount, solved: this.solvedCount })
+      );
+    } catch (e) {}
+  }
+
+  calculateGoldReward(pieces) {
+    const p = Math.max(4, Number(pieces) || 6);
+    return Math.max(10, Math.round((p * (2.2 + Math.sqrt(p) * 0.125)) / 5) * 5);
+  }
+
+  updateScoreUI(animate = false) {
+    if (this.goldCountEl) {
+      this.goldCountEl.textContent = this.goldCount.toLocaleString("tr-TR");
+    }
+    if (this.goldPillEl) {
+      this.goldPillEl.title = `Toplam ${this.goldCount.toLocaleString("tr-TR")} Altın • ${this.solvedCount} Puzzle`;
+      if (animate) {
+        this.goldPillEl.classList.remove("gold-pop");
+        void this.goldPillEl.offsetWidth;
+        this.goldPillEl.classList.add("gold-pop");
+        setTimeout(() => this.goldPillEl.classList.remove("gold-pop"), 520);
+      }
+    }
+  }
+
+  // ============================================================
   // ZAFER VE KUTLAMA KANONLARI (CONFETTİ & FANFARE)
   // ============================================================
   triggerVictory() {
+    if (!this.puzzleRewarded) {
+      this.puzzleRewarded = true;
+      const earned = this.calculateGoldReward(this.totalPieces);
+      this.goldCount += earned;
+      this.solvedCount += 1;
+      this.saveScore();
+      this.updateScoreUI(true);
+
+      if (this.rewardEarnedText) {
+        this.rewardEarnedText.textContent = `+${earned.toLocaleString("tr-TR")} 🪙 Altın Kazandın!`;
+      }
+      if (this.rewardTotalsText) {
+        this.rewardTotalsText.textContent = `Toplam: 🪙 ${this.goldCount.toLocaleString("tr-TR")} • 🧩 ${this.solvedCount} Puzzle`;
+      }
+    }
+
     window.soundFX.playWin();
     this.celebrationOverlay.classList.remove("hidden");
     this.startConfetti();

@@ -89,6 +89,32 @@ html, body {
   text-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
+/* ALTIN SKOR GÖSTERGESİ */
+.gold-score-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #ffd54f, #ffb300);
+  color: #4e2a00;
+  border: 2px solid #fff8e1;
+  box-shadow: 0 3px 10px rgba(255, 179, 0, 0.35);
+  font-weight: 900;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.gold-score-pill.gold-pop {
+  animation: goldPop 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+@keyframes goldPop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.24); filter: brightness(1.15); }
+  100% { transform: scale(1); }
+}
+
 .action-buttons {
   display: flex;
   align-items: center;
@@ -419,6 +445,53 @@ html, body {
   font-size: 14px;
 }
 
+.tray-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tray-filter-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.tray-filter-btn.active {
+  background: linear-gradient(135deg, #ffb300, #ff8f00);
+  color: #3e2723;
+  border-color: #fff3e0;
+  box-shadow: 0 2px 10px rgba(255, 179, 0, 0.45);
+}
+
+.tray-edges-done {
+  margin: 8px 8px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 2px solid #86efac;
+  background: rgba(22, 163, 74, 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+}
+
+.tray-edges-done.hidden {
+  display: none !important;
+}
+
+#tray-pieces.edges-only .puzzle-piece.in-tray:not(.is-edge) {
+  display: none !important;
+}
+
 #tray-scroll {
   flex: 1;
   overflow-y: auto;
@@ -603,8 +676,19 @@ html, body {
 }
 
 #game-app.compact-mode .logo-title,
-#game-app.compact-mode #top-bar .btn .btn-text {
+#game-app.compact-mode #top-bar .btn .btn-text,
+#game-app.compact-mode .tray-filter-text {
   display: none;
+}
+
+#game-app.compact-mode .gold-score-pill {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+#game-app.compact-mode .tray-filter-btn {
+  padding: 2px 7px;
+  font-size: 12px;
 }
 
 #game-app.compact-mode #top-bar .btn {
@@ -1186,7 +1270,29 @@ button.hidden {
   font-size: 18px;
   font-weight: 600;
   color: #5d4037;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
+}
+
+.celebration-reward {
+  background: linear-gradient(135deg, #fff8e1, #ffecb3);
+  border: 2px solid #ffb300;
+  border-radius: 14px;
+  padding: 10px 16px;
+  margin: 0 auto 14px;
+  max-width: 340px;
+}
+
+.reward-earned {
+  font-size: 20px;
+  font-weight: 900;
+  color: #e65100;
+}
+
+.reward-totals {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6d4c41;
+  margin-top: 3px;
 }
 
 .completed-image-preview {

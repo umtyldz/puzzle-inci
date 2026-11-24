@@ -16,6 +16,10 @@
       <div class="logo-area">
         <span class="logo-icon">🧩</span>
         <span class="logo-title">PUZZLE</span>
+        <div id="gold-score-pill" class="gold-score-pill" title="Toplam Altın ve Bitirilen Puzzle">
+          <span class="gold-coin-icon">🪙</span>
+          <span id="gold-count">0</span>
+        </div>
       </div>
 
       <div class="action-buttons">
@@ -96,9 +100,13 @@
       <!-- Sağ Taraf: Parça Çekmecesi / Tepsi -->
       <section id="tray-container">
         <div class="tray-header">
-          <span class="tray-icon">🎈</span>
+          <button id="btn-filter-edges" class="tray-filter-btn" title="Sadece Kenar Parçalarını Göster">
+            <span>🔲</span>
+            <span class="tray-filter-text">Kenarlar</span>
+          </button>
           <span class="tray-counter" id="tray-counter">0 / 6</span>
         </div>
+        <button id="tray-edges-done-banner" class="tray-edges-done hidden">✅ Kenarlar bitti! Tüm parçaları göster</button>
         <div id="tray-scroll">
           <div id="tray-pieces">
             <!-- Serbest parçalar buraya yerleşir -->
@@ -151,34 +159,6 @@
           </div>
         </div>
 
-        <!-- 2.5. GÜVENLİ GÖRSEL ARAMA -->
-        <div class="setup-search-section">
-          <div class="setup-search-row">
-            <span class="setup-url-icon">🔍</span>
-            <input type="search" id="search-input-field" placeholder="Güvenli görsel ara (ör. kedi, uzay, araba, çiçek...)">
-            <button id="btn-search-images" class="btn btn-info">🔍 Ara</button>
-          </div>
-          <div class="search-quick-chips" id="search-quick-chips">
-            <button type="button" class="search-chip" data-q="cute puppy dog" title="Köpek">🐶</button>
-            <button type="button" class="search-chip" data-q="cute kitten cat" title="Kedi">🐱</button>
-            <button type="button" class="search-chip" data-q="dinosaur illustration" title="Dinozor">🦕</button>
-            <button type="button" class="search-chip" data-q="colorful car" title="Araba">🚗</button>
-            <button type="button" class="search-chip" data-q="outer space planet galaxy" title="Uzay">🚀</button>
-            <button type="button" class="search-chip" data-q="colorful butterfly" title="Kelebek">🦋</button>
-            <button type="button" class="search-chip" data-q="ocean dolphin fish" title="Deniz">🐠</button>
-            <button type="button" class="search-chip" data-q="colorful flowers garden" title="Çiçek">🌺</button>
-            <button type="button" class="search-chip" data-q="horse nature" title="At">🐴</button>
-            <button type="button" class="search-chip" data-q="mountain nature landscape" title="Doğa">🏔️</button>
-          </div>
-          <div id="search-results-section" class="search-results-section hidden">
-            <div class="search-results-header">
-              <span id="search-status-text" class="gallery-section-title">🔍 Arama Sonuçları</span>
-              <button type="button" id="btn-clear-search" class="ref-btn" title="Sonuçları Kapat">✖</button>
-            </div>
-            <div id="search-results-grid" class="presets-grid"></div>
-          </div>
-        </div>
-
         <!-- 3. ALTTA: GALERİ BÖLÜMÜ -->
         <div class="setup-gallery-section">
           <div id="recent-images-section" class="recent-section hidden">
@@ -199,6 +179,10 @@
         <div class="trophy-bounce">🏆</div>
         <h1 class="celebration-title">HARİKA! BİTİRDİN! 🎉</h1>
         <p class="celebration-subtitle">Muhteşem bir iş çıkardın!</p>
+        <div id="celebration-reward" class="celebration-reward">
+          <div class="reward-earned" id="reward-earned-text">+15 🪙 Altın Kazandın!</div>
+          <div class="reward-totals" id="reward-totals-text">Toplam: 🪙 15 • 🧩 1 Puzzle</div>
+        </div>
         <div class="completed-image-preview">
           <img id="completed-img" alt="Tamamlanan Puzzle">
         </div>
