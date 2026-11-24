@@ -48,7 +48,7 @@
 
         <!-- Tam Ekran Butonu -->
         <button id="btn-fullscreen" class="btn btn-icon" title="Tam Ekran">
-          <span class="icon">⛶</span>
+          <span class="icon" id="fullscreen-icon">⛶</span>
         </button>
       </div>
     </header>
@@ -57,14 +57,18 @@
     <main id="play-area">
       <!-- Sol Taraf: Puzzle Tahtası / Çerçevesi -->
       <section id="board-container">
-        <div id="board-wrapper">
-          <div id="board">
-            <!-- Hayalet / Arka Plan İpucu Resmi -->
-            <img id="board-hint-img" alt="İpucu Resmi">
-            <!-- İnce kılavuz ızgara çizgileri -->
-            <svg id="board-grid-svg"></svg>
-            <!-- Yerine oturan parçaların kilitlendiği katman -->
-            <div id="board-locked-pieces"></div>
+        <div id="board-stage">
+          <div id="board-wrapper">
+            <div id="board">
+              <!-- Hayalet / Arka Plan İpucu Resmi -->
+              <img id="board-hint-img" alt="İpucu Resmi">
+              <!-- İnce kılavuz ızgara çizgileri -->
+              <svg id="board-grid-svg"></svg>
+              <!-- Yerine oturan parçaların kilitlendiği katman -->
+              <div id="board-locked-pieces"></div>
+              <!-- Masada serbest bırakılan ve gruplanan parçaların katmanı -->
+              <div id="board-floating-pieces"></div>
+            </div>
           </div>
         </div>
 
@@ -79,6 +83,13 @@
           <div id="ref-preview-viewport">
             <img id="ref-preview-img" alt="Tam Resim" draggable="false">
           </div>
+        </div>
+
+        <!-- Tahta Yakınlaştırma Kontrolleri -->
+        <div id="board-camera-controls" aria-label="Tahta Yakınlaştırma">
+          <button id="btn-board-zoom-out" class="ref-btn" title="Tahtayı Uzaklaştır">➖</button>
+          <button id="btn-board-zoom-reset" class="ref-btn ref-btn-text" title="Sıfırla">1x</button>
+          <button id="btn-board-zoom-in" class="ref-btn" title="Tahtayı Yakınlaştır">➕</button>
         </div>
       </section>
 
@@ -97,7 +108,9 @@
     </main>
 
     <!-- Yüzen / Sürüklenen Parçalar Katmanı -->
-    <div id="floating-pieces-layer"></div>
+    <div id="floating-pieces-layer">
+      <div id="drag-group-container"></div>
+    </div>
 
     <!-- GİRİŞ / KURULUM EKRANI (Üstte Parça Sayısı, Ortada Yükle + Link, Altta Galeri) -->
     <div id="modal-setup" class="modal-backdrop">

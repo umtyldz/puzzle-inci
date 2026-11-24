@@ -42,12 +42,16 @@ class PuzzleGame {
     this.gameApp = document.getElementById("game-app");
     this.board = document.getElementById("board");
     this.boardContainer = document.getElementById("board-container");
+    this.boardStage = document.getElementById("board-stage");
     this.boardHintImg = document.getElementById("board-hint-img");
     this.boardGridSvg = document.getElementById("board-grid-svg");
     this.boardLockedLayer = document.getElementById("board-locked-pieces");
+    this.boardFloatingLayer = document.getElementById("board-floating-pieces");
     this.trayPieces = document.getElementById("tray-pieces");
     this.trayCounter = document.getElementById("tray-counter");
     this.floatingLayer = document.getElementById("floating-pieces-layer");
+    this.dragGroupContainer = document.getElementById("drag-group-container");
+    this.btnBoardZoomReset = document.getElementById("btn-board-zoom-reset");
 
     // Modallar ve Butonlar
     this.currentPiecesBadge = document.getElementById("current-pieces-badge");
@@ -63,6 +67,12 @@ class PuzzleGame {
     this.refZoom = 1;
     this.refPanX = 0;
     this.refPanY = 0;
+    this.boardZoom = 1;
+    this.boardPanX = 0;
+    this.boardPanY = 0;
+    this.pendingTrayTouch = null;
+    this.isCompactMode = false;
+    this.hadNativeFullscreen = false;
     this.recentImages = [];
     this.isHttpServer = location.protocol === "http:" || location.protocol === "https:";
     this.groups = new Map();
@@ -74,6 +84,7 @@ class PuzzleGame {
     // Başlat
     this.initPiecesModal();
     this.initEvents();
+    this.initBoardCamera();
     this.initRefPreview();
     this.initPresetsModal();
     this.loadRecentImages();
@@ -394,13 +405,43 @@ class PuzzleGame {
       this.startPuzzle();
     });
 
-    // Tam Ekran Butonu
-    document.getElementById("btn-fullscreen").addEventListener("click", () => {
+    // Tam Ekran / Kompakt Mod Butonu
+    const fullscreenBtn = document.getElementById("btn-fullscreen");
+    const fullscreenIcon = document.getElementById("fullscreen-icon");
+    const syncCompactIcon = () => {
+      this.gameApp.classList.toggle("compact-mode", this.isCompactMode);
+      if (fullscreenIcon) {
+        fullscreenIcon.textContent = this.isCompactMode ? "⤡" : "⛶";
+      }
+      requestAnimationFrame(() => this.updateBoardCamera());
+    };
+
+    fullscreenBtn.addEventListener("click", () => {
       window.soundFX.playClick();
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      } else {
+      this.isCompactMode = !this.isCompactMode;
+      syncCompactIcon();
+
+      if (this.isCompactMode) {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement
+            .requestFullscreen()
+            .then(() => {
+              this.hadNativeFullscreen = true;
+            })
+            .catch(() => {});
+        }
+      } else if (document.fullscreenElement && document.exitFullscreen) {
         document.exitFullscreen().catch(() => {});
+      }
+    });
+
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement && this.hadNativeFullscreen) {
+        this.hadNativeFullscreen = false;
+        if (this.isCompactMode) {
+          this.isCompactMode = false;
+          syncCompactIcon();
+        }
       }
     });
 
@@ -426,6 +467,206 @@ class PuzzleGame {
       this.celebrationOverlay.classList.add("hidden");
       this.openSetupModal();
     });
+  }
+
+  // ============================================================
+  // SOL TAHTA YAKINLAŞTIRMA VE GEZİNME (BOARD CAMERA ZOOM & PAN)
+  // ============================================================
+  initBoardCamera() {
+    const bc = this.boardContainer;
+    const controls = document.getElementById("board-camera-controls");
+    if (!bc || !this.boardStage) return;
+
+    if (controls) {
+      controls.addEventListener("pointerdown", (e) => e.stopPropagation());
+    }
+
+    document.getElementById("btn-board-zoom-in").addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.soundFX.playClick();
+      this.setBoardZoom(this.boardZoom + 0.5);
+    });
+
+    document.getElementById("btn-board-zoom-out").addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.soundFX.playClick();
+      this.setBoardZoom(this.boardZoom - 0.5);
+    });
+
+    this.btnBoardZoomReset.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.soundFX.playClick();
+      this.resetBoardCamera();
+    });
+
+    // Fare tekerleği ile imlecin olduğu noktaya yakınlaştır
+    bc.addEventListener(
+      "wheel",
+      (e) => {
+        if (e.target.closest("#ref-preview-box")) return;
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.25 : -0.25;
+        this.setBoardZoom(this.boardZoom + delta, e.clientX, e.clientY);
+      },
+      { passive: false }
+    );
+
+    const pointers = new Map();
+    let panState = null;
+    let pinchState = null;
+
+    const getTwoFingerMetrics = () => {
+      const pts = Array.from(pointers.values());
+      if (pts.length < 2) return null;
+      return {
+        dist: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
+        midX: (pts[0].x + pts[1].x) / 2,
+        midY: (pts[0].y + pts[1].y) / 2,
+      };
+    };
+
+    bc.addEventListener("pointerdown", (e) => {
+      if (
+        e.target.closest("#ref-preview-box") ||
+        e.target.closest("#board-camera-controls") ||
+        e.target.closest(".puzzle-piece:not(.locked)")
+      ) {
+        return;
+      }
+      if (this.activeDrag) return;
+
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.size === 1 && this.boardZoom > 1) {
+        try {
+          bc.setPointerCapture(e.pointerId);
+        } catch (err) {}
+        panState = {
+          startX: e.clientX,
+          startY: e.clientY,
+          panX: this.boardPanX,
+          panY: this.boardPanY,
+        };
+        pinchState = null;
+        bc.classList.add("is-panning");
+      } else if (pointers.size === 2) {
+        panState = null;
+        bc.classList.remove("is-panning");
+        const metrics = getTwoFingerMetrics();
+        if (metrics) {
+          pinchState = {
+            dist: metrics.dist,
+            zoom: this.boardZoom,
+            lastMidX: metrics.midX,
+            lastMidY: metrics.midY,
+          };
+        }
+      }
+    });
+
+    bc.addEventListener("pointermove", (e) => {
+      if (!pointers.has(e.pointerId) || this.activeDrag) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.size === 2 && pinchState && pinchState.dist > 0) {
+        e.preventDefault();
+        const metrics = getTwoFingerMetrics();
+        if (metrics) {
+          this.boardPanX += metrics.midX - pinchState.lastMidX;
+          this.boardPanY += metrics.midY - pinchState.lastMidY;
+          pinchState.lastMidX = metrics.midX;
+          pinchState.lastMidY = metrics.midY;
+          this.setBoardZoom(
+            pinchState.zoom * (metrics.dist / pinchState.dist),
+            metrics.midX,
+            metrics.midY
+          );
+        }
+      } else if (pointers.size === 1 && panState && this.boardZoom > 1) {
+        e.preventDefault();
+        this.boardPanX = panState.panX + (e.clientX - panState.startX);
+        this.boardPanY = panState.panY + (e.clientY - panState.startY);
+        this.updateBoardCamera();
+      }
+    });
+
+    const endBoardPointer = (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.delete(e.pointerId);
+      try {
+        bc.releasePointerCapture(e.pointerId);
+      } catch (err) {}
+
+      if (pointers.size === 1 && this.boardZoom > 1) {
+        const [rem] = pointers.values();
+        panState = { startX: rem.x, startY: rem.y, panX: this.boardPanX, panY: this.boardPanY };
+        pinchState = null;
+      } else {
+        panState = null;
+        pinchState = null;
+        bc.classList.remove("is-panning");
+      }
+    };
+
+    bc.addEventListener("pointerup", endBoardPointer);
+    bc.addEventListener("pointercancel", endBoardPointer);
+  }
+
+  setBoardZoom(nextZoom, pivotClientX, pivotClientY) {
+    const oldZoom = this.boardZoom;
+    const clampedZoom = Math.max(1, Math.min(4, Math.round((Number(nextZoom) || 1) * 100) / 100));
+    if (clampedZoom === oldZoom) return;
+
+    if (clampedZoom === 1) {
+      this.boardZoom = 1;
+      this.boardPanX = 0;
+      this.boardPanY = 0;
+      this.updateBoardCamera();
+      return;
+    }
+
+    if (typeof pivotClientX === "number" && typeof pivotClientY === "number") {
+      const rect = this.boardContainer.getBoundingClientRect();
+      const px = pivotClientX - (rect.left + rect.width / 2);
+      const py = pivotClientY - (rect.top + rect.height / 2);
+      const ratio = clampedZoom / oldZoom;
+      this.boardPanX = px - (px - this.boardPanX) * ratio;
+      this.boardPanY = py - (py - this.boardPanY) * ratio;
+    } else {
+      const ratio = clampedZoom / oldZoom;
+      this.boardPanX *= ratio;
+      this.boardPanY *= ratio;
+    }
+
+    this.boardZoom = clampedZoom;
+    this.updateBoardCamera();
+  }
+
+  resetBoardCamera() {
+    this.boardZoom = 1;
+    this.boardPanX = 0;
+    this.boardPanY = 0;
+    this.updateBoardCamera();
+  }
+
+  updateBoardCamera() {
+    if (!this.boardStage || !this.boardContainer) return;
+    const cw = this.boardContainer.clientWidth;
+    const ch = this.boardContainer.clientHeight;
+    const z = this.boardZoom;
+    const maxX = Math.max(0, (cw * (z - 1)) / 2 + 80 * (z - 1));
+    const maxY = Math.max(0, (ch * (z - 1)) / 2 + 80 * (z - 1));
+
+    this.boardPanX = Math.max(-maxX, Math.min(maxX, this.boardPanX));
+    this.boardPanY = Math.max(-maxY, Math.min(maxY, this.boardPanY));
+
+    this.boardStage.style.transform = `translate(${this.boardPanX}px, ${this.boardPanY}px) scale(${z})`;
+    this.boardContainer.classList.toggle("is-zoomed", z > 1);
+
+    if (this.btnBoardZoomReset) {
+      const label = Number.isInteger(z) ? `${z}x` : `${z.toFixed(1).replace(/\.0$/, "")}x`;
+      this.btnBoardZoomReset.textContent = label;
+    }
   }
 
   // ============================================================
@@ -846,8 +1087,11 @@ class PuzzleGame {
 
     // Katmanları temizle
     this.boardLockedLayer.innerHTML = "";
+    this.boardFloatingLayer.innerHTML = "";
     this.trayPieces.innerHTML = "";
-    this.floatingLayer.innerHTML = "";
+    this.dragGroupContainer.innerHTML = "";
+    this.dragGroupContainer.style.transform = "";
+    this.resetBoardCamera();
 
     // 1. Jigsaw kenar yapılarını oluştur (İç içe geçmeli kulakçıklar ve yuvalar)
     this.generateEdges();
@@ -1164,71 +1408,153 @@ class PuzzleGame {
   }
 
   // ============================================================
-  // PARÇA SÜRÜKLEME VE BIRAKMA (POINTER EVENTS & GRUP TAŞIMA)
+  // PARÇA SÜRÜKLEME VE BIRAKMA (AKILLI TEPSİ SCROLL + ZOOM UYUMLU GRUP)
   // ============================================================
+  startPieceDrag(piece, clientX, clientY, pointerId, wasInTray) {
+    window.soundFX.playPick();
+
+    const el = piece.element;
+    const group = this.getGroupPieces(piece.groupId);
+    const lockedRect = this.boardLockedLayer.getBoundingClientRect();
+    const layerRect = this.floatingLayer.getBoundingClientRect();
+    const z = this.boardZoom;
+
+    let anchorLocalX = 0;
+    let anchorLocalY = 0;
+    let startScreenAnchorX = 0;
+    let startScreenAnchorY = 0;
+    let offsets = [];
+
+    if (wasInTray) {
+      startScreenAnchorX = clientX - layerRect.left - (piece.canvas.width * z) / 2;
+      startScreenAnchorY = clientY - layerRect.top - (piece.canvas.height * z) / 2;
+      el.classList.remove("in-tray", "floating");
+      el.classList.add("dragging");
+      el.style.left = "0px";
+      el.style.top = "0px";
+      this.dragGroupContainer.appendChild(el);
+      offsets = [{ piece, ox: 0, oy: 0 }];
+    } else {
+      anchorLocalX = piece.x;
+      anchorLocalY = piece.y;
+      startScreenAnchorX = lockedRect.left - layerRect.left + anchorLocalX * z;
+      startScreenAnchorY = lockedRect.top - layerRect.top + anchorLocalY * z;
+
+      const isMulti = group.length > 1;
+      offsets = group.map((p) => {
+        const ox = p.x - anchorLocalX;
+        const oy = p.y - anchorLocalY;
+        p.element.classList.remove("in-tray", "floating");
+        p.element.classList.add("dragging");
+        if (isMulti) {
+          p.element.classList.add("dragging-group");
+        }
+        p.element.style.left = `${ox}px`;
+        p.element.style.top = `${oy}px`;
+        this.dragGroupContainer.appendChild(p.element);
+        return { piece: p, ox, oy };
+      });
+    }
+
+    this.dragGroupContainer.style.transform = `translate(${startScreenAnchorX}px, ${startScreenAnchorY}px) scale(${z})`;
+
+    try {
+      el.setPointerCapture(pointerId);
+    } catch (err) {}
+
+    this.activeDrag = {
+      piece: piece,
+      group: group,
+      pointerId: pointerId,
+      startClientX: clientX,
+      startClientY: clientY,
+      startScreenAnchorX: startScreenAnchorX,
+      startScreenAnchorY: startScreenAnchorY,
+      curScreenAnchorX: startScreenAnchorX,
+      curScreenAnchorY: startScreenAnchorY,
+      offsets: offsets,
+    };
+  }
+
   attachPointerEvents(piece) {
     const el = piece.element;
 
     el.addEventListener("pointerdown", (e) => {
       if (piece.isLocked) return;
-      e.preventDefault();
-
-      // Ses efekti
-      window.soundFX.playPick();
 
       const wasInTray = el.classList.contains("in-tray");
-      const group = this.getGroupPieces(piece.groupId);
-      const layerRect = this.floatingLayer.getBoundingClientRect();
-
-      if (wasInTray) {
-        // Tepsiden alırken parmağın/farenin merkezine yerleştir
-        el.classList.remove("in-tray", "floating");
-        el.classList.add("dragging");
-        this.floatingLayer.appendChild(el);
-        this.setPieceLayerPos(
-          piece,
-          e.clientX - layerRect.left - piece.canvas.width / 2,
-          e.clientY - layerRect.top - piece.canvas.height / 2
-        );
-      } else {
-        // Masadaki tekli parçayı veya çoklu grubu en öne getir
-        const isMulti = group.length > 1;
-        group.forEach((p) => {
-          p.element.classList.remove("in-tray", "floating");
-          p.element.classList.add("dragging");
-          if (isMulti) {
-            p.element.classList.add("dragging-group");
-          }
-          this.floatingLayer.appendChild(p.element);
-        });
+      if (wasInTray && e.pointerType !== "mouse") {
+        // Dokunmatik tepside dikey kaydırmaya izin ver: yön belli olana kadar parçayı koparma
+        if (this.pendingTrayTouch) {
+          clearTimeout(this.pendingTrayTouch.timer);
+          this.pendingTrayTouch = null;
+        }
+        const pending = {
+          piece: piece,
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          timer: setTimeout(() => {
+            if (this.pendingTrayTouch && this.pendingTrayTouch.pointerId === e.pointerId) {
+              const pt = this.pendingTrayTouch;
+              this.pendingTrayTouch = null;
+              this.startPieceDrag(pt.piece, pt.lastX, pt.lastY, pt.pointerId, true);
+            }
+          }, 220),
+        };
+        this.pendingTrayTouch = pending;
+        return;
       }
 
-      // Pointer Capture ile parmak ekrandan kaysa da takibi bırakma
-      el.setPointerCapture(e.pointerId);
-
-      this.activeDrag = {
-        piece: piece,
-        group: group,
-        pointerId: e.pointerId,
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        startPositions: group.map((p) => ({ piece: p, x: p.x, y: p.y })),
-      };
+      e.preventDefault();
+      e.stopPropagation();
+      this.startPieceDrag(piece, e.clientX, e.clientY, e.pointerId, wasInTray);
     });
 
     el.addEventListener("pointermove", (e) => {
+      if (this.pendingTrayTouch && this.pendingTrayTouch.pointerId === e.pointerId) {
+        const pt = this.pendingTrayTouch;
+        pt.lastX = e.clientX;
+        pt.lastY = e.clientY;
+        const dx = e.clientX - pt.startX;
+        const dy = e.clientY - pt.startY;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist >= 8) {
+          clearTimeout(pt.timer);
+          this.pendingTrayTouch = null;
+          if (Math.abs(dy) > Math.abs(dx) * 1.15) {
+            // Dikey kaydırma (tepsi scroll)
+            return;
+          }
+          // Yatay çekiş -> parçayı tepsiden kaldır
+          e.preventDefault();
+          this.startPieceDrag(piece, e.clientX, e.clientY, e.pointerId, true);
+        }
+        return;
+      }
+
       if (!this.activeDrag || this.activeDrag.pointerId !== e.pointerId) return;
       e.preventDefault();
 
       const dx = e.clientX - this.activeDrag.startClientX;
       const dy = e.clientY - this.activeDrag.startClientY;
 
-      this.activeDrag.startPositions.forEach((item) => {
-        this.setPieceLayerPos(item.piece, item.x + dx, item.y + dy);
-      });
+      this.activeDrag.curScreenAnchorX = this.activeDrag.startScreenAnchorX + dx;
+      this.activeDrag.curScreenAnchorY = this.activeDrag.startScreenAnchorY + dy;
+
+      this.dragGroupContainer.style.transform = `translate(${this.activeDrag.curScreenAnchorX}px, ${this.activeDrag.curScreenAnchorY}px) scale(${this.boardZoom})`;
     });
 
     const onPointerUp = (e) => {
+      if (this.pendingTrayTouch && this.pendingTrayTouch.pointerId === e.pointerId) {
+        clearTimeout(this.pendingTrayTouch.timer);
+        this.pendingTrayTouch = null;
+        return;
+      }
+
       if (!this.activeDrag || this.activeDrag.pointerId !== e.pointerId) return;
       e.preventDefault();
 
@@ -1236,10 +1562,21 @@ class PuzzleGame {
         el.releasePointerCapture(e.pointerId);
       } catch (err) {}
 
-      this.activeDrag.group.forEach((p) => {
-        p.element.classList.remove("dragging", "dragging-group");
+      const drag = this.activeDrag;
+      const lockedRect = this.boardLockedLayer.getBoundingClientRect();
+      const layerRect = this.floatingLayer.getBoundingClientRect();
+      const z = this.boardZoom;
+
+      const baseBoardX = (drag.curScreenAnchorX + layerRect.left - lockedRect.left) / z;
+      const baseBoardY = (drag.curScreenAnchorY + layerRect.top - lockedRect.top) / z;
+
+      drag.offsets.forEach((item) => {
+        item.piece.element.classList.remove("dragging", "dragging-group");
+        this.boardFloatingLayer.appendChild(item.piece.element);
+        this.setPieceLayerPos(item.piece, baseBoardX + item.ox, baseBoardY + item.oy);
       });
 
+      this.dragGroupContainer.style.transform = "";
       this.checkGroupPlacement(piece, e.clientX, e.clientY);
       this.activeDrag = null;
     };
@@ -1252,11 +1589,6 @@ class PuzzleGame {
   // YERLEŞTİRME, SERBEST GRUP BİRLEŞTİRME VE TAHTAYA KİLİTLEME
   // ============================================================
   checkGroupPlacement(draggedPiece, dropClientX, dropClientY) {
-    const boardRect = this.board.getBoundingClientRect();
-    const layerRect = this.floatingLayer.getBoundingClientRect();
-    const boardOriginX = boardRect.left - layerRect.left;
-    const boardOriginY = boardRect.top - layerRect.top;
-
     // Oturma eşiği (küçük ve büyük parçalara duyarlı)
     const minCell = Math.min(this.cellWidth, this.cellHeight);
     const snapThreshold = Math.max(16, Math.min(44, minCell * 0.42));
@@ -1288,9 +1620,10 @@ class PuzzleGame {
     };
 
     // A) Doğrudan tahtadaki doğru yerine yakınsa tüm grubu tahtaya kilitle
-    const targetLayerX = boardOriginX + draggedPiece.targetLeft;
-    const targetLayerY = boardOriginY + draggedPiece.targetTop;
-    if (Math.hypot(draggedPiece.x - targetLayerX, draggedPiece.y - targetLayerY) < snapThreshold) {
+    if (
+      Math.hypot(draggedPiece.x - draggedPiece.targetLeft, draggedPiece.y - draggedPiece.targetTop) <
+      snapThreshold
+    ) {
       lockGroupToBoard(this.getGroupPieces(draggedPiece.groupId));
       return;
     }
@@ -1342,9 +1675,9 @@ class PuzzleGame {
             });
             this.groups.delete(oldGid);
 
-            const seamClientX = layerRect.left + (p.x + neighbor.x) / 2 + p.canvas.width / 2;
-            const seamClientY = layerRect.top + (p.y + neighbor.y) / 2 + p.canvas.height / 2;
-            this.createSparklesAtViewport(seamClientX, seamClientY);
+            const seamBoardX = (p.x + neighbor.x) / 2 + p.canvas.width / 2;
+            const seamBoardY = (p.y + neighbor.y) / 2 + p.canvas.height / 2;
+            this.createSparkles(seamBoardX, seamBoardY);
 
             this.getGroupPieces(targetGid).forEach((gp) => {
               gp.element.classList.remove("merge-flash");
@@ -1371,13 +1704,16 @@ class PuzzleGame {
       });
 
       // Birleştikten sonra doğru tahta konumuna denk geldiyse hemen kilitle
-      if (Math.hypot(draggedPiece.x - targetLayerX, draggedPiece.y - targetLayerY) < snapThreshold) {
+      if (
+        Math.hypot(draggedPiece.x - draggedPiece.targetLeft, draggedPiece.y - draggedPiece.targetTop) <
+        snapThreshold
+      ) {
         lockGroupToBoard(mergedGroup);
       }
       return;
     }
 
-    // C) Eşleşme yok: Tekli parça sağdaki tepsiye bırakıldıysa tepsiye iade et, yoksa masada bırak
+    // C) Eşleşme yok: Tekli parça sağdaki tepsiye bırakıldıysa tepsiye iade et, yoksa tahta katmanında bırak
     const group = this.getGroupPieces(draggedPiece.groupId);
     const trayRect = document.getElementById("tray-container").getBoundingClientRect();
     const inTrayZone =
@@ -1404,8 +1740,11 @@ class PuzzleGame {
   }
 
   createSparkles(boardX, boardY) {
-    const boardRect = this.board.getBoundingClientRect();
-    this.createSparklesAtViewport(boardRect.left + boardX, boardRect.top + boardY);
+    const lockedRect = this.boardLockedLayer.getBoundingClientRect();
+    this.createSparklesAtViewport(
+      lockedRect.left + boardX * this.boardZoom,
+      lockedRect.top + boardY * this.boardZoom
+    );
   }
 
   createSparklesAtViewport(globalX, globalY) {
