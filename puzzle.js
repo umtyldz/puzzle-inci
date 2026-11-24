@@ -51,9 +51,10 @@ class PuzzleGame {
 
     // Modallar ve Butonlar
     this.currentPiecesBadge = document.getElementById("current-pieces-badge");
-    this.modalPieces = document.getElementById("modal-pieces");
-    this.modalPresets = document.getElementById("modal-presets");
-    this.modalUrl = document.getElementById("modal-url");
+    this.modalSetup = document.getElementById("modal-setup");
+    this.btnSetupResume = document.getElementById("btn-setup-resume");
+    this.btnSetupClose = document.getElementById("btn-setup-close");
+    this.hasStarted = false;
     this.celebrationOverlay = document.getElementById("celebration-overlay");
     this.completedImg = document.getElementById("completed-img");
     this.refPreviewBox = document.getElementById("ref-preview-box");
@@ -64,6 +65,8 @@ class PuzzleGame {
     this.refPanY = 0;
     this.recentImages = [];
     this.isHttpServer = location.protocol === "http:" || location.protocol === "https:";
+    this.groups = new Map();
+    this.piecesByCoord = new Map();
 
     // Sürükleme değişkenleri
     this.activeDrag = null;
@@ -75,9 +78,6 @@ class PuzzleGame {
     this.initPresetsModal();
     this.loadRecentImages();
     this.initConfetti();
-
-    // Varsayılan resmi yükle (Sevimli Köpek)
-    this.loadPresetById("puppy");
   }
 
   getCurrentImageAspect() {
@@ -166,25 +166,15 @@ class PuzzleGame {
       btn.setAttribute("data-cols", preset.cols);
       btn.setAttribute("data-rows", preset.rows);
 
-      let gridHtml = "";
-      if (preset.dense === 0) {
-        const cells = "<span></span>".repeat(preset.cols * preset.rows);
-        gridHtml = `<div class="piece-card-grid grid-${preset.cols}x${preset.rows}">${cells}</div>`;
-      } else {
-        gridHtml = `<div class="piece-card-grid grid-dense" style="--cell-px: ${preset.dense}px"></div>`;
-      }
-
       btn.innerHTML = `
         <div class="piece-card-icon">${preset.icon}</div>
         <div class="piece-card-title">${preset.pieces} Parça</div>
-        ${gridHtml}
         <div class="piece-card-sub">${preset.sub}</div>
       `;
 
       btn.addEventListener("click", () => {
         window.soundFX.playClick();
-        this.applyPieceSelection(preset.cols, preset.rows);
-        this.modalPieces.classList.add("hidden");
+        this.setPendingPieceSelection(preset.cols, preset.rows);
       });
 
       grid.appendChild(btn);
@@ -192,18 +182,11 @@ class PuzzleGame {
 
     const slider = document.getElementById("custom-pieces-slider");
     const numInput = document.getElementById("custom-pieces-input");
-    const preview = document.getElementById("custom-pieces-preview");
-    const applyBtn = document.getElementById("btn-apply-custom-pieces");
-
-    const updatePreview = (rawVal) => {
-      const g = this.computeGridForPieceCount(rawVal, this.getCurrentImageAspect());
-      preview.textContent = `${g.cols} × ${g.rows} = ${g.pieces} Parça`;
-      return g;
-    };
 
     slider.addEventListener("input", () => {
+      const g = this.computeGridForPieceCount(slider.value, this.getCurrentImageAspect());
       numInput.value = slider.value;
-      updatePreview(slider.value);
+      this.setPendingPieceSelection(g.cols, g.rows, true);
     });
 
     numInput.addEventListener("input", () => {
@@ -212,38 +195,32 @@ class PuzzleGame {
         const clamped = Math.max(4, Math.min(500, parsed));
         if (parsed > 500) numInput.value = 500;
         slider.value = clamped;
-        updatePreview(clamped);
+        const g = this.computeGridForPieceCount(clamped, this.getCurrentImageAspect());
+        this.setPendingPieceSelection(g.cols, g.rows, true);
       }
     });
 
     const clampAndSyncInput = () => {
       const parsed = parseInt(numInput.value, 10);
       const clamped = Math.max(4, Math.min(500, isNaN(parsed) ? this.totalPieces : parsed));
-      numInput.value = clamped;
-      slider.value = clamped;
-      return updatePreview(clamped);
+      const g = this.computeGridForPieceCount(clamped, this.getCurrentImageAspect());
+      numInput.value = g.pieces;
+      slider.value = g.pieces;
+      this.setPendingPieceSelection(g.cols, g.rows, true);
+      return g;
     };
 
     numInput.addEventListener("change", clampAndSyncInput);
 
-    const applyCustom = () => {
-      window.soundFX.playClick();
-      const g = clampAndSyncInput();
-      this.applyPieceSelection(g.cols, g.rows);
-      this.modalPieces.classList.add("hidden");
-    };
-
     numInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        applyCustom();
+        clampAndSyncInput();
       }
     });
-
-    applyBtn.addEventListener("click", applyCustom);
   }
 
-  syncPiecesModalUI() {
+  syncPiecesModalUI(skipInputOverwrite = false) {
     document.querySelectorAll(".piece-card").forEach((card) => {
       const pieces = parseInt(card.getAttribute("data-pieces"), 10);
       card.classList.toggle("active", pieces === this.totalPieces);
@@ -253,20 +230,36 @@ class PuzzleGame {
     const numInput = document.getElementById("custom-pieces-input");
     const preview = document.getElementById("custom-pieces-preview");
     if (slider && numInput && preview) {
-      slider.value = this.totalPieces;
-      numInput.value = this.totalPieces;
+      if (!skipInputOverwrite) {
+        slider.value = this.totalPieces;
+        numInput.value = this.totalPieces;
+      }
       preview.textContent = `${this.cols} × ${this.rows} = ${this.totalPieces} Parça`;
     }
   }
 
-  applyPieceSelection(cols, rows) {
+  setPendingPieceSelection(cols, rows, skipInputOverwrite = false) {
     this.baseCols = cols;
     this.baseRows = rows;
     this.syncGridOrientation();
     this.totalPieces = this.cols * this.rows;
     this.currentPiecesBadge.textContent = this.totalPieces;
-    this.syncPiecesModalUI();
+    this.syncPiecesModalUI(skipInputOverwrite);
+  }
+
+  applyPieceSelection(cols, rows) {
+    this.setPendingPieceSelection(cols, rows);
     this.startPuzzle();
+  }
+
+  openSetupModal() {
+    this.syncPiecesModalUI();
+    this.loadRecentImages();
+    this.btnSetupResume.classList.toggle("hidden", !this.hasStarted);
+    this.btnSetupClose.classList.toggle("hidden", !this.hasStarted);
+    this.modalSetup.classList.remove("hidden");
+    const card = this.modalSetup.querySelector(".modal-card");
+    if (card) card.scrollTop = 0;
   }
 
   // ============================================================
@@ -312,38 +305,41 @@ class PuzzleGame {
       }
     });
 
-    // Modal Butonları
+    // Giriş / Kurulum Modal Butonları
+    document.getElementById("btn-open-setup").addEventListener("click", () => {
+      window.soundFX.playClick();
+      this.openSetupModal();
+    });
+
     document.getElementById("btn-pieces-modal").addEventListener("click", () => {
       window.soundFX.playClick();
-      this.syncPiecesModalUI();
-      this.modalPieces.classList.remove("hidden");
+      this.openSetupModal();
     });
 
-    document.getElementById("btn-presets-modal").addEventListener("click", () => {
+    this.btnSetupResume.addEventListener("click", () => {
+      if (!this.hasStarted || !this.currentImage) return;
       window.soundFX.playClick();
-      this.loadRecentImages();
-      this.modalPresets.classList.remove("hidden");
+      this.modalSetup.classList.add("hidden");
+      this.syncGridOrientation();
+      this.totalPieces = this.cols * this.rows;
+      this.currentPiecesBadge.textContent = this.totalPieces;
+      this.startPuzzle();
     });
 
-    document.getElementById("btn-url-modal").addEventListener("click", () => {
-      window.soundFX.playClick();
-      this.modalUrl.classList.remove("hidden");
-      document.getElementById("url-input-field").focus();
-    });
-
-    // Modal Kapatma Düğmeleri
+    // Modal Kapatma Düğmeleri (yalnızca bir oyun başladıysa kapatılabilir)
     document.querySelectorAll(".modal-close").forEach((btn) => {
       btn.addEventListener("click", (e) => {
+        if (!this.hasStarted) return;
         window.soundFX.playClick();
         const modalId = e.currentTarget.getAttribute("data-close");
         document.getElementById(modalId).classList.add("hidden");
       });
     });
 
-    // Modalların Dışına Tıklayınca Kapat
+    // Modalların Dışına Tıklayınca Kapat (yalnızca bir oyun başladıysa)
     document.querySelectorAll(".modal-backdrop").forEach((backdrop) => {
       backdrop.addEventListener("click", (e) => {
-        if (e.target === backdrop) {
+        if (e.target === backdrop && this.hasStarted) {
           backdrop.classList.add("hidden");
         }
       });
@@ -355,7 +351,6 @@ class PuzzleGame {
       const url = urlInputField.value.trim();
       if (url) {
         window.soundFX.playClick();
-        this.modalUrl.classList.add("hidden");
         urlInputField.value = "";
         this.saveImageUrl(url);
       }
@@ -429,8 +424,7 @@ class PuzzleGame {
       window.soundFX.playClick();
       this.confettiActive = false;
       this.celebrationOverlay.classList.add("hidden");
-      this.loadRecentImages();
-      this.modalPresets.classList.remove("hidden");
+      this.openSetupModal();
     });
   }
 
@@ -668,7 +662,7 @@ class PuzzleGame {
       card.addEventListener("click", () => {
         window.soundFX.playClick();
         this.loadImage(item.url);
-        this.modalPresets.classList.add("hidden");
+        this.modalSetup.classList.add("hidden");
       });
 
       grid.appendChild(card);
@@ -764,7 +758,7 @@ class PuzzleGame {
       card.addEventListener("click", () => {
         window.soundFX.playClick();
         this.loadPresetById(item.id);
-        this.modalPresets.classList.add("hidden");
+        this.modalSetup.classList.add("hidden");
       });
       grid.appendChild(card);
     });
@@ -784,16 +778,23 @@ class PuzzleGame {
       img.crossOrigin = "anonymous";
     }
     img.onload = () => {
+      this.hasStarted = true;
+      this.modalSetup.classList.add("hidden");
       this.currentImage = img;
       this.completedImg.src = src;
       this.boardHintImg.src = src;
       this.refPreviewImg.src = src;
       this.resetRefPreview();
       this.syncGridOrientation();
+      this.totalPieces = this.cols * this.rows;
+      this.currentPiecesBadge.textContent = this.totalPieces;
       this.syncPiecesModalUI();
       this.startPuzzle();
     };
     img.onerror = () => {
+      if (!this.hasStarted) {
+        this.openSetupModal();
+      }
       alert("Resim yüklenirken bir hata oluştu! Lütfen başka bir resim veya link deneyin.");
     };
     img.src = src;
@@ -986,6 +987,8 @@ class PuzzleGame {
   // ============================================================
   createPieces() {
     this.pieces = [];
+    this.groups = new Map();
+    this.piecesByCoord = new Map();
     this.gameApp.classList.toggle("many-pieces", this.totalPieces > 48);
 
     const pad = this.piecePad;
@@ -1052,6 +1055,9 @@ class PuzzleGame {
           row: r,
           col: c,
           id: `p_${r}_${c}`,
+          groupId: `p_${r}_${c}`,
+          x: 0,
+          y: 0,
           element: pieceEl,
           canvas: canvas,
           targetLeft: targetLeft,
@@ -1059,11 +1065,25 @@ class PuzzleGame {
           isLocked: false,
         };
 
+        this.groups.set(pieceObj.groupId, new Set([pieceObj]));
+        this.piecesByCoord.set(`${r}_${c}`, pieceObj);
+
         // Pointer (Fare & Dokunmatik) olaylarını bağla
         this.attachPointerEvents(pieceObj);
         this.pieces.push(pieceObj);
       }
     }
+  }
+
+  getGroupPieces(groupId) {
+    return Array.from(this.groups.get(groupId) || []);
+  }
+
+  setPieceLayerPos(piece, x, y) {
+    piece.x = x;
+    piece.y = y;
+    piece.element.style.left = `${x}px`;
+    piece.element.style.top = `${y}px`;
   }
 
   // ============================================================
@@ -1144,7 +1164,7 @@ class PuzzleGame {
   }
 
   // ============================================================
-  // PARÇA SÜRÜKLEME VE BIRAKMA (POINTER EVENTS)
+  // PARÇA SÜRÜKLEME VE BIRAKMA (POINTER EVENTS & GRUP TAŞIMA)
   // ============================================================
   attachPointerEvents(piece) {
     const el = piece.element;
@@ -1157,35 +1177,42 @@ class PuzzleGame {
       window.soundFX.playPick();
 
       const wasInTray = el.classList.contains("in-tray");
-      const currentRect = el.getBoundingClientRect();
+      const group = this.getGroupPieces(piece.groupId);
+      const layerRect = this.floatingLayer.getBoundingClientRect();
 
-      // Parçayı yüzen katmana taşı
-      el.classList.remove("in-tray", "floating");
-      el.classList.add("dragging");
-      this.floatingLayer.appendChild(el);
-
-      let offsetX, offsetY;
       if (wasInTray) {
         // Tepsiden alırken parmağın/farenin merkezine yerleştir
-        offsetX = piece.canvas.width / 2;
-        offsetY = piece.canvas.height / 2;
+        el.classList.remove("in-tray", "floating");
+        el.classList.add("dragging");
+        this.floatingLayer.appendChild(el);
+        this.setPieceLayerPos(
+          piece,
+          e.clientX - layerRect.left - piece.canvas.width / 2,
+          e.clientY - layerRect.top - piece.canvas.height / 2
+        );
       } else {
-        // Masadan alırken tutulan noktayı koru
-        offsetX = e.clientX - currentRect.left;
-        offsetY = e.clientY - currentRect.top;
+        // Masadaki tekli parçayı veya çoklu grubu en öne getir
+        const isMulti = group.length > 1;
+        group.forEach((p) => {
+          p.element.classList.remove("in-tray", "floating");
+          p.element.classList.add("dragging");
+          if (isMulti) {
+            p.element.classList.add("dragging-group");
+          }
+          this.floatingLayer.appendChild(p.element);
+        });
       }
-
-      el.style.left = `${e.clientX - offsetX}px`;
-      el.style.top = `${e.clientY - offsetY}px`;
 
       // Pointer Capture ile parmak ekrandan kaysa da takibi bırakma
       el.setPointerCapture(e.pointerId);
 
       this.activeDrag = {
         piece: piece,
+        group: group,
         pointerId: e.pointerId,
-        offsetX: offsetX,
-        offsetY: offsetY,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startPositions: group.map((p) => ({ piece: p, x: p.x, y: p.y })),
       };
     });
 
@@ -1193,11 +1220,12 @@ class PuzzleGame {
       if (!this.activeDrag || this.activeDrag.pointerId !== e.pointerId) return;
       e.preventDefault();
 
-      const x = e.clientX - this.activeDrag.offsetX;
-      const y = e.clientY - this.activeDrag.offsetY;
+      const dx = e.clientX - this.activeDrag.startClientX;
+      const dy = e.clientY - this.activeDrag.startClientY;
 
-      el.style.left = `${x}px`;
-      el.style.top = `${y}px`;
+      this.activeDrag.startPositions.forEach((item) => {
+        this.setPieceLayerPos(item.piece, item.x + dx, item.y + dy);
+      });
     });
 
     const onPointerUp = (e) => {
@@ -1208,8 +1236,11 @@ class PuzzleGame {
         el.releasePointerCapture(e.pointerId);
       } catch (err) {}
 
-      el.classList.remove("dragging");
-      this.checkPiecePlacement(piece, e.clientX, e.clientY);
+      this.activeDrag.group.forEach((p) => {
+        p.element.classList.remove("dragging", "dragging-group");
+      });
+
+      this.checkGroupPlacement(piece, e.clientX, e.clientY);
       this.activeDrag = null;
     };
 
@@ -1218,78 +1249,167 @@ class PuzzleGame {
   }
 
   // ============================================================
-  // YERLEŞTİRME VE SNAP (OTURMA) KONTROLÜ
+  // YERLEŞTİRME, SERBEST GRUP BİRLEŞTİRME VE TAHTAYA KİLİTLEME
   // ============================================================
-  checkPiecePlacement(piece, dropClientX, dropClientY) {
-    const el = piece.element;
+  checkGroupPlacement(draggedPiece, dropClientX, dropClientY) {
     const boardRect = this.board.getBoundingClientRect();
-
-    // Parçanın sol üst köşesinin board'a göre koordinatları
-    const currentBoardX = el.getBoundingClientRect().left - boardRect.left;
-    const currentBoardY = el.getBoundingClientRect().top - boardRect.top;
-
-    // Hedef nokta ile arasındaki mesafe
-    const dist = Math.hypot(currentBoardX - piece.targetLeft, currentBoardY - piece.targetTop);
+    const layerRect = this.floatingLayer.getBoundingClientRect();
+    const boardOriginX = boardRect.left - layerRect.left;
+    const boardOriginY = boardRect.top - layerRect.top;
 
     // Oturma eşiği (küçük ve büyük parçalara duyarlı)
     const minCell = Math.min(this.cellWidth, this.cellHeight);
     const snapThreshold = Math.max(16, Math.min(44, minCell * 0.42));
 
-    if (dist < snapThreshold) {
-      // 🎯 DOĞRU YER! PARÇAYI KİLİTLE
-      piece.isLocked = true;
-      el.classList.add("locked");
-      el.classList.remove("in-tray", "floating");
+    const lockGroupToBoard = (group) => {
+      const gid = draggedPiece.groupId;
+      group.forEach((p) => {
+        p.isLocked = true;
+        p.element.classList.add("locked");
+        p.element.classList.remove("in-tray", "floating", "merge-flash");
+        p.element.style.left = `${p.targetLeft}px`;
+        p.element.style.top = `${p.targetTop}px`;
+        this.boardLockedLayer.appendChild(p.element);
+      });
+      this.groups.delete(gid);
 
-      // Doğru konuma oturt
-      el.style.left = `${piece.targetLeft}px`;
-      el.style.top = `${piece.targetTop}px`;
-
-      // Tahtanın kilitli parçalar katmanına taşı
-      this.boardLockedLayer.appendChild(el);
-
-      // Başarılı oturma sesi
       window.soundFX.playSnap();
+      this.createSparkles(
+        draggedPiece.targetLeft + this.cellWidth / 2,
+        draggedPiece.targetTop + this.cellHeight / 2
+      );
 
-      // Kıvılcım / Işıltı parçacıkları
-      this.createSparkles(piece.targetLeft + this.cellWidth / 2, piece.targetTop + this.cellHeight / 2);
-
-      // Parça sayacını güncelle
-      this.placedCount++;
+      this.placedCount += group.length;
       this.updateCounter();
 
-      // Tüm parçalar bitti mi?
       if (this.placedCount === this.totalPieces) {
         setTimeout(() => this.triggerVictory(), 450);
       }
-    } else {
-      // EĞER SAĞDAKİ TEPSİ ALANINA BIRAKILDIYSA: Tepsiye koy
-      const trayRect = document.getElementById("tray-container").getBoundingClientRect();
-      const inTrayZone =
-        dropClientX >= trayRect.left &&
-        dropClientX <= trayRect.right &&
-        dropClientY >= trayRect.top &&
-        dropClientY <= trayRect.bottom;
+    };
 
-      if (inTrayZone) {
-        el.classList.add("in-tray");
-        el.classList.remove("floating");
-        el.style.left = "";
-        el.style.top = "";
-        this.trayPieces.appendChild(el);
-      } else {
-        // Masada serbest bırak
-        el.classList.remove("in-tray");
-        el.classList.add("floating");
+    // A) Doğrudan tahtadaki doğru yerine yakınsa tüm grubu tahtaya kilitle
+    const targetLayerX = boardOriginX + draggedPiece.targetLeft;
+    const targetLayerY = boardOriginY + draggedPiece.targetTop;
+    if (Math.hypot(draggedPiece.x - targetLayerX, draggedPiece.y - targetLayerY) < snapThreshold) {
+      lockGroupToBoard(this.getGroupPieces(draggedPiece.groupId));
+      return;
+    }
+
+    // B) Masada yanlış yerde olsa bile komşu parçalarla eşleşiyorsa grupla (zincirleme destekli)
+    const dirs = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ];
+    let mergedAny = false;
+    let keepScanning = true;
+
+    while (keepScanning) {
+      keepScanning = false;
+      const currentGroup = this.getGroupPieces(draggedPiece.groupId);
+
+      for (const p of currentGroup) {
+        for (const [dr, dc] of dirs) {
+          const neighbor = this.piecesByCoord.get(`${p.row + dr}_${p.col + dc}`);
+          if (
+            !neighbor ||
+            neighbor.isLocked ||
+            neighbor.element.classList.contains("in-tray") ||
+            neighbor.groupId === draggedPiece.groupId
+          ) {
+            continue;
+          }
+
+          const expectedX = neighbor.x + (p.col - neighbor.col) * this.cellWidth;
+          const expectedY = neighbor.y + (p.row - neighbor.row) * this.cellHeight;
+
+          if (Math.hypot(p.x - expectedX, p.y - expectedY) < snapThreshold) {
+            const shiftX = expectedX - p.x;
+            const shiftY = expectedY - p.y;
+
+            currentGroup.forEach((gp) => {
+              this.setPieceLayerPos(gp, gp.x + shiftX, gp.y + shiftY);
+            });
+
+            const oldGid = draggedPiece.groupId;
+            const targetGid = neighbor.groupId;
+            const targetSet = this.groups.get(targetGid);
+
+            currentGroup.forEach((gp) => {
+              gp.groupId = targetGid;
+              targetSet.add(gp);
+            });
+            this.groups.delete(oldGid);
+
+            const seamClientX = layerRect.left + (p.x + neighbor.x) / 2 + p.canvas.width / 2;
+            const seamClientY = layerRect.top + (p.y + neighbor.y) / 2 + p.canvas.height / 2;
+            this.createSparklesAtViewport(seamClientX, seamClientY);
+
+            this.getGroupPieces(targetGid).forEach((gp) => {
+              gp.element.classList.remove("merge-flash");
+              void gp.element.offsetWidth;
+              gp.element.classList.add("merge-flash");
+              setTimeout(() => gp.element.classList.remove("merge-flash"), 380);
+            });
+
+            mergedAny = true;
+            keepScanning = true;
+            break;
+          }
+        }
+        if (keepScanning) break;
       }
+    }
+
+    if (mergedAny) {
+      window.soundFX.playSnap();
+      const mergedGroup = this.getGroupPieces(draggedPiece.groupId);
+      mergedGroup.forEach((gp) => {
+        gp.element.classList.remove("in-tray");
+        gp.element.classList.add("floating");
+      });
+
+      // Birleştikten sonra doğru tahta konumuna denk geldiyse hemen kilitle
+      if (Math.hypot(draggedPiece.x - targetLayerX, draggedPiece.y - targetLayerY) < snapThreshold) {
+        lockGroupToBoard(mergedGroup);
+      }
+      return;
+    }
+
+    // C) Eşleşme yok: Tekli parça sağdaki tepsiye bırakıldıysa tepsiye iade et, yoksa masada bırak
+    const group = this.getGroupPieces(draggedPiece.groupId);
+    const trayRect = document.getElementById("tray-container").getBoundingClientRect();
+    const inTrayZone =
+      dropClientX >= trayRect.left &&
+      dropClientX <= trayRect.right &&
+      dropClientY >= trayRect.top &&
+      dropClientY <= trayRect.bottom;
+
+    if (group.length === 1 && inTrayZone) {
+      const el = draggedPiece.element;
+      el.classList.add("in-tray");
+      el.classList.remove("floating");
+      draggedPiece.x = 0;
+      draggedPiece.y = 0;
+      el.style.left = "";
+      el.style.top = "";
+      this.trayPieces.appendChild(el);
+    } else {
+      group.forEach((gp) => {
+        gp.element.classList.remove("in-tray");
+        gp.element.classList.add("floating");
+      });
     }
   }
 
   createSparkles(boardX, boardY) {
-    const symbols = ["✨", "⭐", "🌟", "💛", "🎉"];
     const boardRect = this.board.getBoundingClientRect();
-    const globalX = boardRect.left + boardX;
-    const globalY = boardRect.top + boardY;
+    this.createSparklesAtViewport(boardRect.left + boardX, boardRect.top + boardY);
+  }
+
+  createSparklesAtViewport(globalX, globalY) {
+    const symbols = ["✨", "⭐", "🌟", "💛", "🎉"];
 
     for (let i = 0; i < 8; i++) {
       const sparkle = document.createElement("div");

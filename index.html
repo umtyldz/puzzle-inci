@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Renkli Puzzle Dünyası 🧩</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -18,23 +19,10 @@
       </div>
 
       <div class="action-buttons">
-        <!-- Dosya Seç / Yükle -->
-        <label class="btn btn-primary" title="Resim Yükle">
-          <span class="icon">📷</span>
-          <span class="btn-text">Resim Seç</span>
-          <input type="file" id="file-input" accept="image/*" hidden>
-        </label>
-
-        <!-- Linkten Resim Al -->
-        <button id="btn-url-modal" class="btn btn-secondary" title="İnternetten Resim Linki">
-          <span class="icon">🔗</span>
-          <span class="btn-text">Link</span>
-        </button>
-
-        <!-- Hazır Eğlenceli Resimler Galerisi -->
-        <button id="btn-presets-modal" class="btn btn-accent" title="Hazır Resimler">
+        <!-- Giriş / Resim ve Parça Seçimi -->
+        <button id="btn-open-setup" class="btn btn-primary" title="Yeni Resim ve Parça Seç">
           <span class="icon">🎨</span>
-          <span class="btn-text">Galeri</span>
+          <span class="btn-text">Yeni Puzzle</span>
         </button>
 
         <!-- Parça Sayısı Seçimi -->
@@ -111,63 +99,55 @@
     <!-- Yüzen / Sürüklenen Parçalar Katmanı -->
     <div id="floating-pieces-layer"></div>
 
-    <!-- MODAL 1: Parça Sayısı Seçimi (Görsel ve Okuma Bilmeyenler İçin Kartlar) -->
-    <div id="modal-pieces" class="modal-backdrop hidden">
-      <div class="modal-card modal-wide">
-        <div class="modal-header">
-          <h2>🧩 Kaç Parça Olsun?</h2>
-          <button class="modal-close" data-close="modal-pieces">✖</button>
+    <!-- GİRİŞ / KURULUM EKRANI (Üstte Parça Sayısı, Ortada Yükle + Link, Altta Galeri) -->
+    <div id="modal-setup" class="modal-backdrop">
+      <div class="modal-card setup-modal-card">
+        <div class="modal-header setup-modal-header">
+          <h2>🧩 Yeni Puzzle</h2>
+          <div class="setup-header-actions">
+            <button id="btn-setup-resume" class="btn btn-accent hidden">▶️ Mevcut Resimle Oyna</button>
+            <button id="btn-setup-close" class="modal-close hidden" data-close="modal-setup">✖</button>
+          </div>
         </div>
-        <div id="piece-options-grid" class="piece-options-grid"></div>
-        <div class="custom-pieces-section">
-          <div class="custom-pieces-header">
-            <span>🎛️ Özel Parça Sayısı (4 - 500)</span>
+
+        <!-- 1. ÜSTTE: PARÇA SAYISI -->
+        <div class="setup-section">
+          <div class="setup-section-header">
+            <span class="setup-section-title">🧩 Parça Sayısı</span>
             <span id="custom-pieces-preview" class="custom-pieces-preview">3 × 2 = 6 Parça</span>
           </div>
-          <div class="custom-pieces-controls">
+          <div id="piece-options-grid" class="piece-options-grid"></div>
+          <div class="setup-custom-row">
+            <span class="setup-custom-label">🎛️ Özel (4 - 500)</span>
             <input type="range" id="custom-pieces-slider" min="4" max="500" step="1" value="6">
             <input type="number" id="custom-pieces-input" min="4" max="500" value="6">
-            <button id="btn-apply-custom-pieces" class="btn btn-primary">
-              <span>▶️</span> Başlat
-            </button>
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- MODAL 2: Hazır Resimler Galerisi -->
-    <div id="modal-presets" class="modal-backdrop hidden">
-      <div class="modal-card modal-wide">
-        <div class="modal-header">
-          <h2>🎨 Bir Resim Seç</h2>
-          <button class="modal-close" data-close="modal-presets">✖</button>
-        </div>
-        <div id="recent-images-section" class="recent-section hidden">
-          <h3 class="gallery-section-title">🕒 Son Görseller</h3>
-          <div id="recent-grid" class="presets-grid"></div>
-        </div>
-        <h3 class="gallery-section-title">🎨 Hazır Resimler</h3>
-        <div id="presets-grid" class="presets-grid">
-          <!-- Hazır resim kartları JS ile eklenecek -->
-        </div>
-      </div>
-    </div>
-
-    <!-- MODAL 3: Linkten Resim Yükleme -->
-    <div id="modal-url" class="modal-backdrop hidden">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h2>🔗 İnternetten Resim Linki</h2>
-          <button class="modal-close" data-close="modal-url">✖</button>
-        </div>
-        <div class="url-input-form">
-          <input type="url" id="url-input-field" placeholder="https://ornek.com/resim.jpg" autofocus>
-          <div class="url-actions">
-            <button id="btn-load-url" class="btn btn-primary">
-              <span>🚀</span> Resmi Yükle
-            </button>
+        <!-- 2. ORTADA: UPLOAD + LINK SATIRI -->
+        <div class="setup-upload-row">
+          <label class="btn btn-primary setup-upload-btn" title="Cihazdan Resim Seç">
+            <span>📷</span>
+            <span>Resim Yükle</span>
+            <input type="file" id="file-input" accept="image/*" hidden>
+          </label>
+          <div class="setup-url-group">
+            <span class="setup-url-icon">🔗</span>
+            <input type="url" id="url-input-field" placeholder="Resim linki yapıştır (https://...)">
+            <button id="btn-load-url" class="btn btn-secondary">🚀 Yükle</button>
           </div>
-          <p class="url-hint">💡 Google veya başka bir sitedeki herhangi bir resmin linkini yapıştırabilirsiniz.</p>
+        </div>
+
+        <!-- 3. ALTTA: GALERİ BÖLÜMÜ -->
+        <div class="setup-gallery-section">
+          <div id="recent-images-section" class="recent-section hidden">
+            <h3 class="gallery-section-title">🕒 Son Görseller</h3>
+            <div id="recent-grid" class="presets-grid"></div>
+          </div>
+          <h3 class="gallery-section-title">🎨 Hazır Resimler</h3>
+          <div id="presets-grid" class="presets-grid">
+            <!-- Hazır resim kartları JS ile eklenecek -->
+          </div>
         </div>
       </div>
     </div>
