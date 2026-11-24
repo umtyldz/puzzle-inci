@@ -151,6 +151,34 @@
           </div>
         </div>
 
+        <!-- 2.5. GÜVENLİ GÖRSEL ARAMA -->
+        <div class="setup-search-section">
+          <div class="setup-search-row">
+            <span class="setup-url-icon">🔍</span>
+            <input type="search" id="search-input-field" placeholder="Güvenli görsel ara (ör. kedi, uzay, araba, çiçek...)">
+            <button id="btn-search-images" class="btn btn-info">🔍 Ara</button>
+          </div>
+          <div class="search-quick-chips" id="search-quick-chips">
+            <button type="button" class="search-chip" data-q="cute puppy dog" title="Köpek">🐶</button>
+            <button type="button" class="search-chip" data-q="cute kitten cat" title="Kedi">🐱</button>
+            <button type="button" class="search-chip" data-q="dinosaur illustration" title="Dinozor">🦕</button>
+            <button type="button" class="search-chip" data-q="colorful car" title="Araba">🚗</button>
+            <button type="button" class="search-chip" data-q="outer space planet galaxy" title="Uzay">🚀</button>
+            <button type="button" class="search-chip" data-q="colorful butterfly" title="Kelebek">🦋</button>
+            <button type="button" class="search-chip" data-q="ocean dolphin fish" title="Deniz">🐠</button>
+            <button type="button" class="search-chip" data-q="colorful flowers garden" title="Çiçek">🌺</button>
+            <button type="button" class="search-chip" data-q="horse nature" title="At">🐴</button>
+            <button type="button" class="search-chip" data-q="mountain nature landscape" title="Doğa">🏔️</button>
+          </div>
+          <div id="search-results-section" class="search-results-section hidden">
+            <div class="search-results-header">
+              <span id="search-status-text" class="gallery-section-title">🔍 Arama Sonuçları</span>
+              <button type="button" id="btn-clear-search" class="ref-btn" title="Sonuçları Kapat">✖</button>
+            </div>
+            <div id="search-results-grid" class="presets-grid"></div>
+          </div>
+        </div>
+
         <!-- 3. ALTTA: GALERİ BÖLÜMÜ -->
         <div class="setup-gallery-section">
           <div id="recent-images-section" class="recent-section hidden">

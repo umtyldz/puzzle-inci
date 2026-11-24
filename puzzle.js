@@ -4,6 +4,30 @@
    otomatik oturma (snap), konfeti ve kutlama animasyonları
    ============================================================ */
 
+const SAFE_BLOCKED_PATTERN =
+  /\b(sex|porn|xxx|nude|naked|nsfw|erotic|hentai|bikini|lingerie|gore|blood|kill|murder|death|corpse|violence|gun|weapon|rifle|knife|drug|cocaine|weed|alcohol|beer|vodka|seks|porno|ciplak|erotik|yetiskin|kan|olum|silah|bicak|uyusturucu|alkol|siddet)\b/i;
+
+const TR_TO_EN_DICT = {
+  kedi: "cat", kedicik: "kitten", kopek: "dog", yavru: "puppy", aslan: "lion",
+  kaplan: "tiger", fil: "elephant", zurafa: "giraffe", maymun: "monkey", ayi: "bear",
+  panda: "panda", tavsan: "rabbit", kus: "bird", papagan: "parrot", baykus: "owl",
+  penguen: "penguin", balik: "fish", yunus: "dolphin", balina: "whale",
+  kopekbaligi: "shark", kaplumbaga: "turtle", kurbaga: "frog", kelebek: "butterfly",
+  ari: "bee", ugurbocegi: "ladybug", at: "horse", inek: "cow", koyun: "sheep",
+  kuzu: "lamb", ordek: "duck", tavuk: "chicken", horoz: "rooster", dinozor: "dinosaur",
+  ejderha: "dragon", tekboynuz: "unicorn", unicorn: "unicorn", araba: "car",
+  kamyon: "truck", itfaiye: "fire truck", polis: "police car", tren: "train",
+  ucak: "airplane", helikopter: "helicopter", gemi: "ship", tekne: "sailboat",
+  bisiklet: "bicycle", uzay: "outer space", gezegen: "planet", roket: "rocket",
+  ay: "moon", gunes: "sun", yildiz: "stars", gokkusagi: "rainbow", bulut: "clouds",
+  cicek: "flower", gul: "rose", lale: "tulip", papatya: "daisy", agac: "tree",
+  orman: "forest", dag: "mountain", deniz: "ocean", plaj: "beach", gol: "lake",
+  selale: "waterfall", sato: "castle", kale: "castle", ev: "house", bahce: "garden",
+  meyve: "fruit", elma: "apple", cilek: "strawberry", muz: "banana", pasta: "cake",
+  dondurma: "ice cream", top: "soccer ball", doga: "nature", manzara: "landscape",
+  cizgi: "illustration", karikatur: "cartoon", sevimli: "cute", renkli: "colorful",
+};
+
 const PIECE_PRESETS = [
   { pieces: 4,   cols: 2,  rows: 2,  icon: "🐣", sub: "Çok Kolay", dense: 0 },
   { pieces: 6,   cols: 3,  rows: 2,  icon: "🐰", sub: "Kolay",     dense: 0 },
@@ -75,6 +99,8 @@ class PuzzleGame {
     this.hadNativeFullscreen = false;
     this.recentImages = [];
     this.isHttpServer = location.protocol === "http:" || location.protocol === "https:";
+    this.hasLocalApi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    this.searchSeq = 0;
     this.groups = new Map();
     this.piecesByCoord = new Map();
 
@@ -86,6 +112,7 @@ class PuzzleGame {
     this.initEvents();
     this.initBoardCamera();
     this.initRefPreview();
+    this.initImageSearch();
     this.initPresetsModal();
     this.loadRecentImages();
     this.initConfetti();
@@ -815,10 +842,216 @@ class PuzzleGame {
   }
 
   // ============================================================
+  // GÜVENLİ GÖRSEL ARAMA (OPENVERSE + WIKIMEDIA COMMONS)
+  // ============================================================
+  normalizeTurkish(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/ç/g, "c")
+      .replace(/ğ/g, "g")
+      .replace(/ı/g, "i")
+      .replace(/İ/g, "i")
+      .replace(/ö/g, "o")
+      .replace(/ş/g, "s")
+      .replace(/ü/g, "u");
+  }
+
+  isSafeQueryOrTitle(text) {
+    const normalized = this.normalizeTurkish(text);
+    return !SAFE_BLOCKED_PATTERN.test(normalized);
+  }
+
+  translateQueryToEnglish(rawQuery) {
+    const words = this.normalizeTurkish(rawQuery)
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    return words.map((w) => TR_TO_EN_DICT[w] || w).join(" ");
+  }
+
+  initImageSearch() {
+    const input = document.getElementById("search-input-field");
+    const btn = document.getElementById("btn-search-images");
+    const clearBtn = document.getElementById("btn-clear-search");
+    const chips = document.querySelectorAll(".search-chip");
+    if (!input || !btn) return;
+
+    const runSearch = () => {
+      const q = input.value.trim();
+      if (!q) return;
+      chips.forEach((c) => c.classList.remove("active"));
+      window.soundFX.playClick();
+      this.searchOnlineImages(q, q);
+    };
+
+    btn.addEventListener("click", runSearch);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runSearch();
+      }
+    });
+
+    chips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        window.soundFX.playClick();
+        chips.forEach((c) => c.classList.remove("active"));
+        chip.classList.add("active");
+        const q = chip.getAttribute("data-q") || "";
+        const label = chip.getAttribute("title") || q;
+        input.value = label;
+        this.searchOnlineImages(q, label);
+      });
+    });
+
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        window.soundFX.playClick();
+        chips.forEach((c) => c.classList.remove("active"));
+        document.getElementById("search-results-section").classList.add("hidden");
+      });
+    }
+  }
+
+  async searchOnlineImages(rawQuery, displayLabel) {
+    const section = document.getElementById("search-results-section");
+    const grid = document.getElementById("search-results-grid");
+    const statusText = document.getElementById("search-status-text");
+    if (!section || !grid || !statusText) return;
+
+    section.classList.remove("hidden");
+    const label = displayLabel || rawQuery;
+
+    if (!this.isSafeQueryOrTitle(rawQuery)) {
+      statusText.textContent = "🛡️ Güvenli Arama";
+      grid.innerHTML = `<div class="search-message">🛡️ Güvenli arama filtresi: Lütfen çocuk dostu başka bir kelime deneyin.</div>`;
+      return;
+    }
+
+    const seq = ++this.searchSeq;
+    statusText.textContent = `🔍 "${label}" aranıyor...`;
+    grid.innerHTML = `<div class="search-message">⏳ Güvenli görseller getiriliyor...</div>`;
+
+    const queryEn = this.translateQueryToEnglish(rawQuery) || rawQuery;
+    let items = [];
+
+    // 1. Birincil kaynak: Openverse (mature=false, CORS destekli)
+    try {
+      items = await this.fetchOpenverseImages(queryEn, true);
+      if (items.length < 4) {
+        const wider = await this.fetchOpenverseImages(queryEn, false);
+        const seen = new Set(items.map((x) => x.thumbUrl));
+        wider.forEach((x) => {
+          if (!seen.has(x.thumbUrl)) items.push(x);
+        });
+      }
+    } catch (e) {
+      console.warn("Openverse araması başarısız, Wikimedia deneniyor:", e);
+    }
+
+    // 2. Yedek kaynak: Wikimedia Commons (origin=*, CORS destekli)
+    if (items.length === 0) {
+      try {
+        items = await this.fetchWikimediaImages(queryEn);
+      } catch (e) {
+        console.warn("Wikimedia araması başarısız:", e);
+      }
+    }
+
+    if (seq !== this.searchSeq) return;
+
+    const finalItems = items.slice(0, 9);
+    grid.innerHTML = "";
+
+    if (finalItems.length === 0) {
+      statusText.textContent = `🔍 "${label}"`;
+      grid.innerHTML = `<div class="search-message">😕 Uygun görsel bulunamadı. Başka bir kelime veya emoji dene!</div>`;
+      return;
+    }
+
+    statusText.textContent = `🔍 "${label}" (${finalItems.length} görsel)`;
+    finalItems.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "preset-card";
+
+      const img = document.createElement("img");
+      img.crossOrigin = "anonymous";
+      img.loading = "lazy";
+      img.src = item.thumbUrl;
+      img.alt = item.title || label;
+
+      const title = document.createElement("div");
+      title.className = "preset-card-title";
+      title.textContent = item.title || label;
+
+      card.appendChild(img);
+      card.appendChild(title);
+      card.addEventListener("click", () => {
+        window.soundFX.playClick();
+        this.selectSearchedImage(item);
+      });
+
+      grid.appendChild(card);
+    });
+  }
+
+  async fetchOpenverseImages(query, preferWide) {
+    const aspectParam = preferWide ? "&aspect_ratio=wide" : "";
+    const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(
+      query
+    )}&mature=false&extension=jpg,png${aspectParam}&page_size=12`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const list = Array.isArray(data.results) ? data.results : [];
+
+    return list
+      .filter((r) => !r.mature && r.thumbnail && this.isSafeQueryOrTitle(r.title || ""))
+      .map((r) => {
+        const sep = r.thumbnail.includes("?") ? "&" : "?";
+        return {
+          title: (r.title || query).trim().slice(0, 40),
+          thumbUrl: r.thumbnail,
+          fullUrl: `${r.thumbnail}${sep}full_size=true`,
+        };
+      });
+  }
+
+  async fetchWikimediaImages(query) {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(
+      "filetype:bitmap " + query
+    )}&gsrlimit=12&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=960&format=json&origin=*`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const pages = data && data.query && data.query.pages ? Object.values(data.query.pages) : [];
+    const allowedMimes = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+    return pages
+      .map((p) => {
+        const ii = p.imageinfo && p.imageinfo[0];
+        if (!ii || !ii.thumburl || !allowedMimes.has((ii.mime || "").toLowerCase())) return null;
+        const rawTitle = (p.title || "").replace(/^File:/i, "").replace(/\.[^.]+$/, "");
+        if (!this.isSafeQueryOrTitle(rawTitle)) return null;
+        return {
+          title: (rawTitle || query).slice(0, 40),
+          thumbUrl: ii.thumburl,
+          fullUrl: ii.thumburl,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  selectSearchedImage(item) {
+    this.saveImageUrl(item.fullUrl, item.thumbUrl, item.title);
+  }
+
+  // ============================================================
   // SON GÖRSELLER (KLASÖRE KAYDETME & YENİDEN YÜKLEME)
   // ============================================================
   async loadRecentImages() {
-    if (this.isHttpServer) {
+    if (this.hasLocalApi) {
       try {
         const res = await fetch("/api/recent-images");
         if (res.ok) {
@@ -827,8 +1060,9 @@ class PuzzleGame {
           this.renderRecentImages();
           return;
         }
+        this.hasLocalApi = false;
       } catch (e) {
-        console.warn("Sunucudan son görseller alınamadı:", e);
+        this.hasLocalApi = false;
       }
     }
 
@@ -911,7 +1145,7 @@ class PuzzleGame {
   }
 
   async saveUploadedFile(file, dataUrl) {
-    if (this.isHttpServer) {
+    if (this.hasLocalApi) {
       try {
         const res = await fetch(`/api/save-image?name=${encodeURIComponent(file.name || "resim.png")}`, {
           method: "POST",
@@ -922,8 +1156,9 @@ class PuzzleGame {
           await this.loadRecentImages();
           return;
         }
+        this.hasLocalApi = false;
       } catch (e) {
-        console.warn("Görsel klasöre kaydedilemedi:", e);
+        this.hasLocalApi = false;
       }
     }
 
@@ -931,8 +1166,8 @@ class PuzzleGame {
     this.saveToLocalStorage({ filename: file.name, name: cleanName, url: dataUrl });
   }
 
-  async saveImageUrl(url) {
-    if (this.isHttpServer) {
+  async saveImageUrl(url, fallbackUrl = null, label = "Link Resmi") {
+    if (this.hasLocalApi) {
       try {
         const res = await fetch("/api/save-url", {
           method: "POST",
@@ -942,7 +1177,7 @@ class PuzzleGame {
         if (res.ok) {
           const data = await res.json();
           if (data && data.ok && data.url) {
-            this.loadImage(data.url);
+            this.loadImage(data.url, fallbackUrl);
             await this.loadRecentImages();
             return;
           }
@@ -952,13 +1187,13 @@ class PuzzleGame {
       }
     }
 
-    this.loadImage(url);
-    this.saveToLocalStorage({ filename: url, name: "Link Resmi", url });
+    this.loadImage(url, fallbackUrl);
+    this.saveToLocalStorage({ filename: url, name: label || "Link Resmi", url: fallbackUrl || url });
   }
 
   async deleteRecentImage(item) {
     window.soundFX.playClick();
-    if (this.isHttpServer && item.filename && !item.localOnly) {
+    if (this.hasLocalApi && item.filename && !item.localOnly) {
       try {
         await fetch("/api/delete-image", {
           method: "POST",
@@ -1013,7 +1248,7 @@ class PuzzleGame {
   // ============================================================
   // RESİM YÜKLE VE BOYUTLANDIR
   // ============================================================
-  loadImage(src) {
+  loadImage(src, fallbackSrc = null) {
     const img = new Image();
     if (src.startsWith("http")) {
       img.crossOrigin = "anonymous";
@@ -1033,6 +1268,10 @@ class PuzzleGame {
       this.startPuzzle();
     };
     img.onerror = () => {
+      if (fallbackSrc && fallbackSrc !== src) {
+        this.loadImage(fallbackSrc, null);
+        return;
+      }
       if (!this.hasStarted) {
         this.openSetupModal();
       }
