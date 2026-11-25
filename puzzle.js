@@ -5,6 +5,9 @@
    ============================================================ */
 
 const ENABLE_IMAGE_SEARCH = false;
+const MAX_RECENT_IMAGES = 30;
+const RECENT_IDB_NAME = "PuzzleRecentImagesDB";
+const RECENT_IDB_STORE = "images";
 
 const SAFE_BLOCKED_PATTERN =
   /\b(sex|porn|xxx|nude|naked|nsfw|erotic|hentai|bikini|lingerie|gore|blood|kill|murder|death|corpse|violence|gun|weapon|rifle|knife|drug|cocaine|weed|alcohol|beer|vodka|seks|porno|ciplak|erotik|yetiskin|kan|olum|silah|bicak|uyusturucu|alkol|siddet)\b/i;
@@ -119,7 +122,9 @@ class PuzzleGame {
     this.edgesOnlyFilter = false;
     this.recentImages = [];
     this.isHttpServer = location.protocol === "http:" || location.protocol === "https:";
-    this.hasLocalApi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    this.hasLocalApi =
+      (location.hostname === "localhost" || location.hostname === "127.0.0.1") &&
+      !location.search.includes("idb=1");
     this.searchSeq = 0;
     this.imageLoadSeq = 0;
     this.victoryTimer = null;
@@ -1192,15 +1197,128 @@ class PuzzleGame {
   }
 
   // ============================================================
-  // SON GÖRSELLER (KLASÖRE KAYDETME & YENİDEN YÜKLEME)
+  // SON GÖRSELLER (INDEXEDDB + YEREL KLASÖR, SON 30 GÖRSEL FIFO)
   // ============================================================
+  openRecentImagesDB() {
+    if (this._recentDbPromise) return this._recentDbPromise;
+    this._recentDbPromise = new Promise((resolve) => {
+      if (typeof indexedDB === "undefined") {
+        resolve(null);
+        return;
+      }
+      try {
+        const req = indexedDB.open(RECENT_IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(RECENT_IDB_STORE)) {
+            db.createObjectStore(RECENT_IDB_STORE, { keyPath: "id" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+    return this._recentDbPromise;
+  }
+
+  idbGetAll(db) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(RECENT_IDB_STORE, "readonly");
+      const store = tx.objectStore(RECENT_IDB_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const list = Array.isArray(req.result) ? req.result : [];
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        resolve(list);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  idbPut(db, record) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(RECENT_IDB_STORE, "readwrite");
+      tx.objectStore(RECENT_IDB_STORE).put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("IDB transaction aborted"));
+    });
+  }
+
+  idbDelete(db, id) {
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(RECENT_IDB_STORE, "readwrite");
+        tx.objectStore(RECENT_IDB_STORE).delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        tx.onabort = () => resolve();
+      } catch (e) {
+        resolve();
+      }
+    });
+  }
+
+  async migrateLegacyLocalStorageToIDB(db) {
+    if (!db) return;
+    try {
+      if (localStorage.getItem("puzzle_recent_migrated_idb_v1") === "1") return;
+      const raw = localStorage.getItem("puzzle_recent_images_v1");
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const now = Date.now();
+        for (let i = 0; i < parsed.length; i++) {
+          const old = parsed[i];
+          if (!old || !old.url) continue;
+          await this.idbPut(db, {
+            id: old.id || `legacy_${now}_${i}`,
+            sourceKey: old.sourceKey || old.url,
+            filename: old.filename || old.name || "resim",
+            name: old.name || "Kaydedilen Resim",
+            url: old.url,
+            createdAt: old.createdAt || now - i * 1000,
+            localOnly: true,
+          });
+        }
+      }
+      localStorage.setItem("puzzle_recent_migrated_idb_v1", "1");
+      localStorage.removeItem("puzzle_recent_images_v1");
+    } catch (e) {}
+  }
+
+  deriveImageTitle(rawLabel, urlOrFilename) {
+    const cleanedLabel = (rawLabel || "").trim();
+    if (cleanedLabel && cleanedLabel !== "Link Resmi" && cleanedLabel !== "image") {
+      return cleanedLabel.slice(0, 32);
+    }
+    if (typeof urlOrFilename === "string" && !urlOrFilename.startsWith("data:")) {
+      try {
+        const noQuery = urlOrFilename.split("?")[0].split("#")[0];
+        const seg = decodeURIComponent(noQuery.split("/").pop() || "")
+          .replace(/\.[^.]+$/, "")
+          .replace(/[_-]+/g, " ")
+          .trim();
+        if (seg && seg.length >= 2 && seg.toLowerCase() !== "image") {
+          return seg.slice(0, 32);
+        }
+      } catch (e) {}
+    }
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${cleanedLabel || "Görsel"} (${hh}:${mm})`;
+  }
+
   async loadRecentImages() {
     if (this.hasLocalApi) {
       try {
         const res = await fetch("/api/recent-images");
         if (res.ok) {
           const data = await res.json();
-          this.recentImages = Array.isArray(data) ? data : [];
+          this.recentImages = (Array.isArray(data) ? data : []).slice(0, MAX_RECENT_IMAGES);
           this.renderRecentImages();
           return;
         }
@@ -1210,17 +1328,28 @@ class PuzzleGame {
       }
     }
 
+    const db = await this.openRecentImagesDB();
+    if (db) {
+      try {
+        await this.migrateLegacyLocalStorageToIDB(db);
+        const items = await this.idbGetAll(db);
+        this.recentImages = items.slice(0, MAX_RECENT_IMAGES);
+        this.renderRecentImages();
+        return;
+      } catch (e) {}
+    }
+
     try {
       const raw = localStorage.getItem("puzzle_recent_images_v1");
       const parsed = raw ? JSON.parse(raw) : [];
-      this.recentImages = Array.isArray(parsed) ? parsed : [];
+      this.recentImages = Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT_IMAGES) : [];
     } catch (e) {
       this.recentImages = [];
     }
     this.renderRecentImages();
   }
 
-  compressDataUrlForStorage(dataUrl, maxDim = 960, quality = 0.8) {
+  compressDataUrlForStorage(dataUrl, maxDim = 1280, quality = 0.84) {
     return new Promise((resolve) => {
       if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
         resolve(dataUrl);
@@ -1251,14 +1380,75 @@ class PuzzleGame {
     });
   }
 
-  saveToLocalStorage(item) {
+  async saveBrowserRecentImage(item) {
+    const newId = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const record = {
+      id: newId,
+      sourceKey: item.sourceKey || item.url,
+      filename: item.filename || item.name || "resim.jpg",
+      name: item.name || "Kaydedilen Resim",
+      url: item.url,
+      createdAt: Date.now(),
+      localOnly: true,
+    };
+
+    const db = await this.openRecentImagesDB();
+    if (db) {
+      try {
+        let existing = await this.idbGetAll(db);
+        // Yalnızca birebir aynı görsel/link ise eskisini kaldırıp en üste taşı (isme göre SİLME!)
+        const duplicates = existing.filter(
+          (x) => x.url === record.url || (record.sourceKey && x.sourceKey === record.sourceKey)
+        );
+        for (const dup of duplicates) {
+          await this.idbDelete(db, dup.id);
+        }
+        existing = existing.filter(
+          (x) => x.url !== record.url && (!record.sourceKey || x.sourceKey !== record.sourceKey)
+        );
+
+        // Limit (30) aşıldıysa en eski kayıtları sil
+        while (existing.length >= MAX_RECENT_IMAGES) {
+          const oldest = existing.pop();
+          if (oldest && oldest.id) {
+            await this.idbDelete(db, oldest.id);
+          }
+        }
+
+        // Kaydet (cihaz hafızası doluysa yer açılana kadar en eskileri silerek tekrar dene)
+        let saved = false;
+        while (!saved) {
+          try {
+            await this.idbPut(db, record);
+            saved = true;
+          } catch (quotaErr) {
+            if (existing.length === 0) throw quotaErr;
+            const oldest = existing.pop();
+            if (oldest && oldest.id) {
+              await this.idbDelete(db, oldest.id);
+            }
+          }
+        }
+
+        const updated = await this.idbGetAll(db);
+        this.recentImages = updated.slice(0, MAX_RECENT_IMAGES);
+        this.renderRecentImages();
+        return;
+      } catch (e) {
+        console.warn("IndexedDB kaydı başarısız, localStorage yedeğine geçiliyor:", e);
+      }
+    }
+
+    // Yedek: localStorage (yalnızca aynı URL ise birleştir, isim çakışmasında silme!)
     try {
       const raw = localStorage.getItem("puzzle_recent_images_v1");
       let list = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(list)) list = [];
-      list = list.filter((x) => x.url !== item.url && x.name !== item.name);
-      list.unshift({ ...item, localOnly: true });
-      list = list.slice(0, 8);
+      list = list.filter(
+        (x) => x.url !== record.url && (!record.sourceKey || x.sourceKey !== record.sourceKey)
+      );
+      list.unshift(record);
+      list = list.slice(0, MAX_RECENT_IMAGES);
       while (list.length > 0) {
         try {
           localStorage.setItem("puzzle_recent_images_v1", JSON.stringify(list));
@@ -1274,6 +1464,7 @@ class PuzzleGame {
 
   renderRecentImages() {
     const section = document.getElementById("recent-images-section");
+    const titleEl = document.getElementById("recent-section-title");
     const grid = document.getElementById("recent-grid");
     if (!section || !grid) return;
 
@@ -1281,6 +1472,10 @@ class PuzzleGame {
     if (!this.recentImages || this.recentImages.length === 0) {
       section.classList.add("hidden");
       return;
+    }
+
+    if (titleEl) {
+      titleEl.textContent = `🕒 Son Görseller (${this.recentImages.length})`;
     }
 
     section.classList.remove("hidden");
@@ -1337,9 +1532,15 @@ class PuzzleGame {
       }
     }
 
-    const cleanName = (file.name || "Yüklenen Resim").replace(/\.[^.]+$/, "");
+    const rawBase = (file.name || "").replace(/\.[^.]+$/, "");
+    const cleanName = this.deriveImageTitle(rawBase, file.name);
     const compactDataUrl = await this.compressDataUrlForStorage(dataUrl);
-    this.saveToLocalStorage({ filename: file.name, name: cleanName, url: compactDataUrl });
+    await this.saveBrowserRecentImage({
+      sourceKey: `${file.name || "upload"}_${file.size || 0}_${file.lastModified || 0}`,
+      filename: file.name,
+      name: cleanName,
+      url: compactDataUrl,
+    });
   }
 
   async saveImageUrl(url, fallbackUrl = null, label = "Link Resmi") {
@@ -1363,8 +1564,31 @@ class PuzzleGame {
       }
     }
 
-    this.loadImage(url, fallbackUrl, (loadedSrc) => {
-      this.saveToLocalStorage({ filename: loadedSrc, name: label || "Link Resmi", url: loadedSrc });
+    this.loadImage(url, fallbackUrl, async (loadedSrc, loadedImg) => {
+      let storedUrl = loadedSrc;
+      try {
+        if (loadedImg && loadedImg.naturalWidth > 0) {
+          const w = loadedImg.naturalWidth;
+          const h = loadedImg.naturalHeight;
+          const ratio = Math.min(1, 1280 / Math.max(w, h));
+          const snapCanvas = document.createElement("canvas");
+          snapCanvas.width = Math.max(1, Math.round(w * ratio));
+          snapCanvas.height = Math.max(1, Math.round(h * ratio));
+          const sctx = snapCanvas.getContext("2d");
+          sctx.fillStyle = "#ffffff";
+          sctx.fillRect(0, 0, snapCanvas.width, snapCanvas.height);
+          sctx.drawImage(loadedImg, 0, 0, snapCanvas.width, snapCanvas.height);
+          storedUrl = snapCanvas.toDataURL("image/jpeg", 0.84);
+        }
+      } catch (e) {
+        storedUrl = loadedSrc;
+      }
+      await this.saveBrowserRecentImage({
+        sourceKey: url,
+        filename: url,
+        name: this.deriveImageTitle(label, url),
+        url: storedUrl,
+      });
     });
   }
 
@@ -1384,10 +1608,21 @@ class PuzzleGame {
       }
     }
 
+    const db = await this.openRecentImagesDB();
+    if (db && item.id) {
+      await this.idbDelete(db, item.id);
+      const updated = await this.idbGetAll(db);
+      this.recentImages = updated.slice(0, MAX_RECENT_IMAGES);
+      this.renderRecentImages();
+      return;
+    }
+
     try {
       const raw = localStorage.getItem("puzzle_recent_images_v1");
       const list = raw ? JSON.parse(raw) : [];
-      const next = Array.isArray(list) ? list.filter((x) => x.url !== item.url) : [];
+      const next = Array.isArray(list)
+        ? list.filter((x) => (item.id ? x.id !== item.id : x.url !== item.url))
+        : [];
       localStorage.setItem("puzzle_recent_images_v1", JSON.stringify(next));
       this.recentImages = next;
       this.renderRecentImages();
@@ -1451,7 +1686,7 @@ class PuzzleGame {
         this.commitPendingPieceSelection();
         this.startPuzzle();
         if (typeof onSuccess === "function") {
-          onSuccess(src);
+          onSuccess(src, img);
         }
       } catch (err) {
         console.error("Puzzle oluşturma hatası:", err);

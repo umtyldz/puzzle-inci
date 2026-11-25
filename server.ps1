@@ -1,4 +1,4 @@
-param([int]$Port = 8080)
+﻿param([int]$Port = 8080)
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -78,6 +78,15 @@ function Save-ImageBytes([byte[]]$bytes, [string]$rawName, [string]$ext) {
     $filename = "${stamp}_${safeBase}_${hashHex}${ext}"
     $destPath = Join-Path $savedDir $filename
     [System.IO.File]::WriteAllBytes($destPath, $bytes)
+
+    # Son 30 görseli tut, fazlası varsa en eskileri sil
+    $excessFiles = Get-ChildItem -Path $savedDir -File |
+        Where-Object { $allowedExts -contains $_.Extension.ToLower() } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -Skip 30
+    foreach ($ef in $excessFiles) {
+        try { Remove-Item -Path $ef.FullName -Force } catch {}
+    }
 
     return @{
         ok = $true
